@@ -223,7 +223,7 @@ sub notify_script_execution_time {
 
 			if ($is_need_blame -> {$i -> {name}}) {
 
-				my @script_authors = guess_error_author_mail ({error_kind => 'script', file => $i -> {path}, line => 1});
+				my @script_authors = guess_error_author_mail ({kind => 'script', file => $i -> {path}, line => 1});
 
 				$warning_details .= !@script_authors? ""
 					: (" (blame " . join (', ', map {$_ -> {label}} @script_authors) . ")");
@@ -254,12 +254,9 @@ sub error_detail_tail {
 
 	my ($options) = @_;
 
-	return ''
-		if $options -> {kind} ne 'code';
-
 	local %_REQUEST = %_REQUEST_VERBATIM;
 
-	local %_REQUEST = %_REQUEST;
+	keys %_REQUEST or return;
 
 	delete $_REQUEST {error};
 
@@ -277,6 +274,10 @@ sub error_detail_tail {
 		(map {$_ => $_USER -> {$_}} qw(id id__real label label__real))
 	});
 
+	$error_tail .= "\n\n\$_DB = " . Dumper ({
+		DATA_SOURCE => $db -> get_info ($GetInfoType {SQL_DATA_SOURCE_NAME})
+	});
+
 	return $error_tail;
 }
 
@@ -286,7 +287,7 @@ sub guess_error_author_mail { # error author = last file commiter
 
 	my ($options) = @_;
 
-	$options -> {error_kind} ~~ ['sql', 'code', 'script']
+	$options -> {kind} ~~ ['sql', 'code', 'script']
 		or return ();
 
 	my ($file, $line) = ($options -> {file}, $options -> {line});
@@ -350,7 +351,10 @@ sub _adjust_core_error_kind {
 			$error_details .= "params:\n(" . join (", ", @{$options -> {params}}) . ")\n";
 		}
 
-		my $is_lock_error = 0 + ($options -> {error} =~ /failed:\s*(dead)?lock/i);
+		my $is_lock_error = 0 + (
+			$options -> {error} =~ /failed:\s*(dead)?lock/i
+			|| $options -> {error} =~ /\bShareLock\b/i
+		);
 
 		if ($is_lock_error) {
 			$error_details .= $subdelimiter . sql_engine_status ();

@@ -105,9 +105,9 @@ sub select__info {
 
 		{
 			id      => 'DBMS',
-			label   => $SQL_VERSION -> {string},
-			version => $SQL_VERSION -> {number},
-			path    => $SQL_VERSION -> {path},
+			label   => $preconf -> {sql_version} -> {string} || $SQL_VERSION -> {string},
+			version => $preconf -> {sql_version} -> {number} || $SQL_VERSION -> {number},
+			path    => $preconf -> {sql_version} -> {path}   || $SQL_VERSION -> {path},
 		},
 
 		{
@@ -117,7 +117,8 @@ sub select__info {
 
 		{
 			id      => 'DB driver',
-			label   => 'DBD::' . $db -> {Driver} -> {Name} . ' ' . ${'DBD::' . $db -> {Driver} -> {Name} . '::VERSION'},
+			label   => $preconf -> {sql_version} -> {driver} || ('DBD::' . $db -> {Driver} -> {Name} . ' ' . ${'DBD::' . $db -> {Driver} -> {Name} . '::VERSION'}),
+			path    => $preconf -> {sql_version} -> {driver_path},
 		},
 
 		{
@@ -183,6 +184,8 @@ sub select__info {
 		$i -> {product} =~ s{^Eludia::Presentation::Skins::}{};
 
 	}
+
+	eval { _select__info ($data) };
 
 	return $data;
 

@@ -518,11 +518,11 @@ sub draw_text_cell {
 
 	my $format =  {
 		text_wrap => 1,
-		border    => 1,
-		valign    => 'top',
-		align     => 'left',
-		font      => $_REQUEST {__xl_font},
-		size      => $_REQUEST {__xl_font_size},
+     	border    => 1,
+     	valign	  => 'top',
+		align 	  => 'left',
+     	font      => $_REQUEST {__xl_font},
+     	size      => $_REQUEST {__xl_font_size},
 	};
 
 	foreach (@{$worksheet -> {__united_cells} -> {$_REQUEST {__xl_row}}}) {
@@ -533,10 +533,19 @@ sub draw_text_cell {
 
 	if (defined ($data -> {label}) && !($data -> {off})) {
 
-		$txt = $data -> {label};
+		if ($data -> {attributes} -> {align}) {
+			$format -> {align} = $data -> {attributes} -> {align};
+		}
+
+		if ($data -> {attributes} -> {title} && $data -> {picture}) {
+			$txt = $data -> {attributes} -> {title};
+		}
+		else {
+			$txt = $data -> {label};
+		}
 
 		if ($txt =~ /^(\-|\+)?\d+(\.?\d+|)$/) {
-			$format -> {align} = 'right';
+			$format -> {align} ||= 'right';
 		}
 
 		if (length $txt > 0) {
@@ -550,11 +559,11 @@ sub draw_text_cell {
 			}
 			elsif ($txt =~ /^\d\d\.\d\d\.\d\d(\d\d)?$/) {
 				$format -> {num_format} = 'm/d/yy';
-				$format -> {align} = 'right';
+				$format -> {align} ||= 'right';
 			}
 			elsif ($txt =~ /^\d\d\.\d\d\.\d\d\d\d \d\d:\d\d:?\d?\d?$/) {
 				$format -> {num_format} = 'm/d/yy h:mm';
-				$format -> {align} = 'right';
+				$format -> {align} ||= 'right';
 			}
 			elsif ($txt =~ /^\d{12,20}$/) {
 				$format -> {num_format} = '#' x 20;
@@ -575,9 +584,6 @@ sub draw_text_cell {
 			}
 		}
 
-		if ($data -> {attributes} -> {align}) {
-			$format -> {align} = $data -> {attributes} -> {align};
-		}
 	}
 
 	if ($data -> {bgcolor} ||= $data -> {attributes} -> {bgcolor}) {
@@ -652,6 +658,9 @@ sub draw_checkbox_cell {
 
 sub draw_select_cell {
 	my ($_SKIN, $data, $options) = @_;
+	my $worksheet = $_REQUEST {__xl_workbook} -> get_worksheet_by_name ($_REQUEST {__xl_sheet_name});
+	$worksheet -> write ($_REQUEST {__xl_row}, $_REQUEST {__xl_col}, " ", $_REQUEST{__xl_format} -> {simple_border});
+	$_REQUEST {__xl_col} += 1;
 	return '';
 }
 
@@ -757,6 +766,10 @@ sub draw_table_header_cell {
 			push @{$worksheet -> {__map_str} -> {$row + $i}}, $k;
 		}
 		$i++;
+	}
+
+	if ($cell -> {xl_height}){
+		$worksheet -> set_row ($row, $cell -> {xl_height});
 	}
 
 	$_REQUEST {__xl_col} = $_REQUEST {__xl_col} + $colspan;
@@ -1246,10 +1259,6 @@ sub decode_rus {
 
 	my ($row, $col, $label, @args) = @_;
 
-	if (Encode::is_utf8 ($label)) {
-		return undef;
-	}
-
 	$label = decode ($i18n -> {_charset}, $label);
 
     return $worksheet -> write ($row, $col, $label, @args);
@@ -1270,11 +1279,15 @@ sub processing_string{
 	$string =~ s/\<(b|h)r\/?\>/\n/ig;
 	$string =~ s/&rArr;/ \=\> /ig;
 
-	$string = Encode::decode ('cp-1251', $string)
-			if $preconf -> {core_skin} ne 'Ken';
-
 	$string =~ s/&#x([a-fA-F0-9]+);/"&#". hex($1) .";"/ge;
-	$string =~ s/&#([0-9]+);/chr($1)." "/ge;
+
+	while ($string =~ m/&#([0-9]+);/) {
+		if ($1 >= 0 && $1 < 256) {
+			$string =~ s/&#([0-9]+);/chr($1)/e;
+		} else {
+			$string =~ s/&#([0-9]+);//;
+		}
+	}
 
 	$string =~ s/<[^>]*>//ig;
 

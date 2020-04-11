@@ -41,7 +41,9 @@ wish (table_data => [
 
 foreach my $view (@$views) {
 
-	my $sql_explain = sql_select_scalar ("SELECT TABLE_NAME FROM INFORMATION_SCHEMA.VIEWS WHERE TABLE_SCHEMA = database() AND TABLE_NAME = ?", $view -> {name});
+	my $table_schema = lc $SQL_VERSION -> {driver} eq 'postgresql' ? 'table_catalog' : 'table_schema';
+
+	my $sql_explain = sql_select_scalar ("SELECT TABLE_NAME FROM INFORMATION_SCHEMA.VIEWS WHERE $table_schema = database() AND TABLE_NAME = ?", $view -> {name});
 
 	is_deeply ($sql_explain, $view -> {name}, "view created: $$view{name}") or darn [$view, $sql_explain];
 
@@ -64,9 +66,11 @@ sub test_views_def {
 		fake = 0
 	GROUP BY
 		name
+	ORDER BY
+		2 DESC
 EOS
 
-	my $sql_src = <<'SRC';
+	my $sql_src = <<SRC;
 sql => <<EOS,
 $sql
 EOS

@@ -59,6 +59,7 @@ sub draw_text_cell {
 		}
 
 		if ($data -> {href} && !$_REQUEST {lpt}) {
+
 			check_href ($data) unless $data -> {no_check_href};
 			$data -> {a_class} ||= $options -> {a_class} || 'row-cell';
 			if ($data -> {no_wait_cursor}) {

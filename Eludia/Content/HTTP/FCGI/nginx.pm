@@ -359,7 +359,7 @@ sub start_unix {
 
 	};
 
-	my $socket = FCGI::OpenSocket ($options {-address}, $options {-backlog});
+	our $socket = FCGI::OpenSocket ($options {-address}, $options {-backlog});
 
 	$options {-address} =~ /^\:/ or chmod 0777, $options {-address};
 
@@ -397,8 +397,12 @@ sub start_unix {
 
 				check_configuration_and_handle_request_for_application ($app);
 
-				exit
-					if --$requests < 0;
+				$requests = 0 if $ENV {__suicide};
+
+				if (--$requests < 0) {
+					$request -> Finish();
+					exit;
+				}
 
 			}
 

@@ -48,7 +48,7 @@ sub wish_to_clarify_demands_for_table_columns {
 
 	if ($i -> {TYPE_NAME} eq 'TIMESTAMP') {
 
-		$i -> {COLUMN_DEF} = 'now()';
+		$i -> {COLUMN_DEF} = 'CURRENT_TIMESTAMP::timestamp(0)';
 				
 	}
 
@@ -163,6 +163,12 @@ sub wish_to_explore_existing_table_columns {
 			
 				$r -> {COLUMN_DEF} =~ s{\:\:\w+$}{};
 
+				if ($r -> {TYPE_NAME} =~ /(int|numeric|float)/i) {
+
+					$r -> {COLUMN_DEF} =~ s/(^'|'$)//ig;
+
+				}
+
 			}
 			
 			if ($r -> {TYPE_NAME} eq 'NUMERIC') {
@@ -172,7 +178,11 @@ sub wish_to_explore_existing_table_columns {
 				$r -> {DECIMAL_DIGITS} = $i -> {atttypmod} - ($r -> {COLUMN_SIZE} << 16) - 4;
 			
 			}
+			if ($r -> {TYPE_NAME} eq 'FLOAT8') {
 
+				$r -> {TYPE_NAME} = 'FLOAT';
+
+			}
 		},
 		
 		$options -> {table},
@@ -200,16 +210,18 @@ sub __genereate_sql_fragment_for_column {
 	$i -> {SQL} = $i -> {TYPE};
 
 	if (defined $i -> {COLUMN_DEF}) {
-	
-		if ($i -> {COLUMN_DEF} !~ /\)/) {
 
-			$i -> {COLUMN_DEF} =~ s{'}{''}g; #';
+		my $d = $i -> {COLUMN_DEF};
+
+		if ($d !~ /\)/) {
+
+			$d =~ s{'}{''}g; #';
 			
-			$i -> {COLUMN_DEF} = "'$i->{COLUMN_DEF}'";
+			$d = "'$i->{COLUMN_DEF}'";
 
 		}
 
-		$i -> {SQL} .= " DEFAULT $i->{COLUMN_DEF}";
+		$i -> {SQL} .= " DEFAULT $d";
 	
 	}
 

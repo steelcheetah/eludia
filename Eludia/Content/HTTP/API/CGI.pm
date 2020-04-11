@@ -11,6 +11,8 @@ sub get_request {
 	our %_COOKIES = CGI::Cookie -> parse ($r -> {headers_in} -> {Cookie});
 	our %_REQUEST = %{$apr -> parms};
 
+	delete $_REQUEST{__suicide} if (defined($_REQUEST{__suicide}));
+
 }
 
 ################################################################################

@@ -199,7 +199,8 @@ sub js_detail {
 		push @all_details, $detail;
 
 		$tab_js .= <<EOJS;
-			element = window.form.elements['_${detail}'];
+
+			element = \$('[name=_${detail}]')[0];
 			if (element) {
 				tabs.push (element.tabIndex);
 			}
@@ -217,15 +218,18 @@ EOJS
 
 	$options -> {value_src} ||= "(this.type == 'checkbox' ? this.checked ? 1 : 0 : this.value)";
 
+	my $edit = $_REQUEST {__edit} || 0;
+
 	my $onchange = $_REQUEST {__windows_ce} ? "loadSlaveDiv ('$$h{href}&__only_form=this.form.name&_$$options{name}=this.value&__only_field=" . (join ',', @all_details) : <<EOJS;
 		activate_link (
 
 			'$script_name/$href&__only_field=${\(join (',', @all_details))}&__only_form=' +
-			window.form.name +
+			\$(this).closest('form').attr('name') +
 			'&_$$options{name}=' +
 			$options->{value_src} +
 			'&__src_field=' +
 			'$$options{name}' +
+			'&__edit=$edit' +
 			codetails_url +
 			tab
 
@@ -365,12 +369,12 @@ sub __adjust_button_href {
 
 		}
 
-		$options -> {href} = qq {javascript:if($condition){$cursor_state$js_action}else{${js_restore_cursor}nop()}};
+		$options -> {href} = qq {javascript:if($condition){$cursor_state$js_action}else{if (is_interface_is_locked) { unblockui(); }${js_restore_cursor}nop()}};
 
 	}
 	elsif ($options -> {no_wait_cursor}) {
 
-		$options -> {onclick} .= qq {$cursor_state void(0);};
+		$options -> {onclick} = qq {onclick="$cursor_state void(0);"};
 
 	}
 
@@ -403,20 +407,24 @@ sub __adjust_button_blockui {
 
 	if ($preconf -> {core_blockui_on_submit} && $options -> {blockui}) {
 
-		unless ($options -> {href} =~ /^javaScript\:/i) {
+		$options -> {target} ||= '_self';
 
-			$options -> {target} ||= '_self';
+		my $js = "blockui ('', 1, \$(el).closest('form').attr('name'));";
 
+		if ($options -> {href} =~ /^javascript\:(.*)/i) {
+			$js .= "nope('$1','$options->{target}');";
+		} else {
 			$options -> {href} =~ s{\%}{\%25}g unless $options -> {parent};
-
-			$options -> {href} = qq {javascript: nope('$options->{href}','$options->{target}')};
-
-			$options -> {target} = '_self';
-
+			$js .= "nope('$$options{href}','$options->{target}');";
 		}
 
-		$options -> {href} =~ s/\bnope\b/blockui ('', 1);nope/;
+		$options -> {target} = '_self';
 
+		if ($options -> {onclick} =~ /^onclick\=\"(.*)\"$/i) {
+			$js .= $1;
+		}
+
+		$options -> {onclick} = "onclick=\"(function(el) { window.event.preventDefault(); $js })(this); \"";
 	}
 
 }
@@ -606,11 +614,13 @@ EOJ
 	}
 
 
-	$_REQUEST {__no_back} or $_REQUEST {__script} .= "\n if (window.name != 'invisible') {history.go (-1)}\n";
+	my $back = $_REQUEST {__no_back} ? '' : "if (window.name != 'invisible') history.go (-1);";
 
 	$_REQUEST {__script} .= <<EOJ;
 			var data = $data;
-			alert (data [0]);
+
+			if (window.name === 'invisible') parent.alert(data[0], null, { on_close: function() { $back } });
+			else alert(data[0], null, { on_close: function() { $back } });
 			try {window.parent.setCursor ()} catch (e) {}
 			window.parent.document.body.style.cursor = 'default';
 			try {window.parent.poll_invisibles ()} catch (e) {}
@@ -622,7 +632,26 @@ $_REQUEST{__script}
 }
 EOJ
 
-	return qq{<html><head><script>$_REQUEST{__script}</script></head><body onLoad="on_load ()"></body></html>};
+	return <<EOS;
+<html>
+	<head>
+		<link href='/i/mint/libs/KendoUI/styles/kendo.common.min.css' type="text/css" rel="stylesheet">
+		<link href='/i/mint/libs/KendoUI/styles/kendo.bootstrap.min.css' type="text/css" rel="stylesheet">
+		<link href='/i/mint/stylesheets/housing.css' type="text/css" rel="stylesheet">
+		<style>
+			* { font-family: sans-serif; }
+		</style>
+		<script src="/i/mint/libs/KendoUI/js/jquery.min.js"></script>
+		<script src="/i/mint/libs/KendoUI/js/kendo.core.min.js"></script>
+		<script src="/i/mint/libs/KendoUI/js/kendo.window.min.js"></script>
+		<script src="$_REQUEST{__static_url}/navigation.js"></script>
+		<script>
+			$_REQUEST{__script}
+		</script>
+	</head>
+	<body onLoad="on_load ()"></body>
+</html>
+EOS
 
 }
 
@@ -741,9 +770,63 @@ EOJS
 EOJS
 		} else {
 			$_REQUEST {__script} .= <<EOJS;
-		var element = doc.getElementById ('input_$field_name');
+		var element = (function() {
+			var el = doc.querySelector('[name=_$field_name]'),
+				sought_for = null;
+
+			if (
+				typeof window.top._ === 'undefined'
+				&& typeof Array.prototype.indexOf === 'undefined'
+			) {
+				Array.prototype.indexOf = function(elt /*, from*/) {
+					var len = this.length >>> 0,
+						from = Number(arguments[1]) || 0;
+
+					from = (from < 0) ? Math.ceil(from) : Math.floor(from);
+					if (from < 0) {
+						from += len;
+					}
+					for (; from < len; from++) {
+						if (from in this && this[from] === elt) {
+							return from;
+						}
+					}
+
+					return -1;
+				}
+			}
+
+			if (el !== null) {
+				var stop = false;
+
+				el = el.parentElement;
+				while(!stop) {
+					var result = (typeof window.top._ === 'undefined')
+						? el.classList.indexOf('k-widget') !== -1
+						: window.top._.indexOf(el.classList, 'k-widget') !== -1;
+
+					if (
+						result
+						|| el.parentElement === null
+					) {
+						if (result) {
+							sought_for = el
+						}
+						stop = true
+					} else {
+						el = el.parentElement
+					}
+				}
+			}
+
+			return sought_for
+		})();
+		if (!element) element = doc.getElementById ('input_$field_name');
 		if (!element) element = doc.forms ['$_REQUEST{__only_form}'].elements ['_$field_name'];
-		if (!element) element = doc.forms ['$_REQUEST{__only_form}'].all.namedItem ('_$field_name');
+		try {
+			if (!element) element = doc.forms ['$_REQUEST{__only_form}'].all.namedItem ('_$field_name');
+		} catch(e){}
+		if (element && element.parentElement.id == 'input_$field_name') element = element.parentElement;
 EOJS
 		}
 
@@ -753,6 +836,76 @@ EOJS
 		element.outerHTML = a [0];
 		element.tabIndex = "$tabs[$i]";
 //		if (element.onChange) element.onChange ();
+
+		var \$ = window.parent.\$;
+
+		if (
+			typeof window.parent !== 'undefined'
+			&& typeof window.parent.\$ !== 'undefined'
+			&& typeof window.parent.\$.fn.kendoTooltip !== 'undefined'
+		) {
+			\$('[data-tooltip]').each(function() {
+				var \$this = \$(this);
+
+				if (typeof \$this.data('kendoTooltip') === 'undefined') {
+					\$this.kendoTooltip({
+						content: \$this.attr('data-tooltip')
+					})
+				}
+			});
+		}
+EOJS
+
+		if ($field -> {type} eq 'file') {
+			my $hasFiles = defined $field->{value}
+				? "\$('#file_input_$field->{name}').hide();"
+				: "\$('#file_name_$field->{name}').hide();";
+
+			$_REQUEST{__script} .= <<EOJS;
+
+		var \$file = \$('input[type=file][name=_$field_name]');
+
+		if (
+			!!\$file.length
+			&& typeof \$.fn.kendoUpload !== 'undefined'
+		) {
+			\$file.kendoUpload({
+				multiple : \$file.attr('data-ken-multiple') == 'true'
+			});
+			$hasFiles
+		}
+EOJS
+		}
+
+		if ($field -> {type} eq 'radio') {
+
+			my $subfields_type;
+			foreach my $value (@{$field -> {values}}) {
+
+				$value -> {type} or next;
+
+				push @{$subfields_type -> {$value -> {type}}}, $value -> {name};
+
+				if ($value -> {type} eq 'hgroup') {
+					foreach (@{$value -> {items}}) {
+						push @{$subfields_type -> {$_ -> {type}}}, $_ -> {name}
+					}
+				}
+			}
+
+			my $date_field = $subfields_type -> {date} || $subfields_type -> {datetime};
+
+			if (@$date_field) {
+
+				my $dt_selector = join ',', map {"[name=$_]"} @$date_field;
+
+				$_REQUEST{__script} .= <<EOJS;
+		window.parent.init_date_fields(\$('$dt_selector'));
+EOJS
+			}
+		} # field type radio
+
+		$_REQUEST{__script} .= <<EOJS;
 	}
 EOJS
 

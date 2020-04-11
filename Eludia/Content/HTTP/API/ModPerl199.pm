@@ -9,6 +9,8 @@ sub get_request {
 	our %_COOKIES = Apache::Cookie  -> fetch;
 	our %_REQUEST = %{$apr -> parms};
 
+	delete $_REQUEST{__suicide} if (defined($_REQUEST{__suicide}));
+
 }
 
 ################################################################################

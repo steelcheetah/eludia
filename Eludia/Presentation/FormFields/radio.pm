@@ -25,6 +25,7 @@ sub draw_form_field_radio {
 		$value -> {type} or next;
 
 		local $value -> {attributes};
+		$value -> {attributes} -> {class} = "radio-child";
 		$value -> {html} = call_from_file ("Eludia/Presentation/FormFields/$value->{type}.pm", "draw_form_field_$value->{type}", $value, $data);
 		delete $value -> {attributes} -> {class};
 

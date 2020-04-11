@@ -214,6 +214,8 @@ sub require_scripts_of_type ($) {
 
 	my $__last_update = get_last_update ();
 
+	warn "  Loaded last update: " . localtime_to_iso ($__last_update) . "\n" if $preconf -> {core_debug_require_scripts};
+
 	my $__time = 0;
 
 	my $postfix = '/' . ucfirst $script_type;
@@ -257,7 +259,12 @@ sub require_scripts_of_type ($) {
 
 			my ($dev, $ino, $mode, $nlink, $uid, $gid, $rdev, $size, $atime, $last_modified, $ctime, $blksize, $blocks) = stat ($script -> {path});
 
-			($script -> {last_modified} = $last_modified) > $__last_update or next;
+			$script -> {last_modified} = $last_modified;
+
+			if ($last_modified <= $__last_update) {
+				warn "  bypassing $script->{path} as too old: " . localtime_to_iso ($last_modified) . " <= " . localtime_to_iso ($__last_update) . "\n" if $preconf -> {core_debug_require_scripts};
+				next;
+			}
 
 			$__time = $last_modified if $__time < $last_modified;
 
@@ -271,6 +278,8 @@ sub require_scripts_of_type ($) {
 
 		if (@scripts == 0) {
 
+			warn " All $script_type are older than __last_update.\n" if $preconf -> {core_debug_require_scripts};
+
 			__profile_out ("require.scripts.$script_type");
 
 			next;
@@ -279,16 +288,9 @@ sub require_scripts_of_type ($) {
 
 		my ($needed_scripts, $new_checksums) = checksum_filter ($checksum_kind, '', $name2def);
 
-		if (!$is_start_scripts && $script_type eq "updates") {
-
-			checksum_write ($checksum_kind, $new_checksums);
-
-			__profile_out ("require.scripts.$script_type");
-
-			next;
-		}
-
 		if (%$needed_scripts == 0) {
+
+			warn " All scripts are filtered out.\n" if $preconf -> {core_debug_require_scripts};
 
 			__profile_out ("require.scripts.$script_type");
 
@@ -297,6 +299,51 @@ sub require_scripts_of_type ($) {
 		}
 
 		@scripts = grep {$needed_scripts -> {$_ -> {name}}} @scripts;
+
+		warn " Considering the following scripts: " . Dumper (\@scripts) . ".\n" if $preconf -> {core_debug_require_scripts};
+
+		$name2def = {};
+
+		foreach my $script (@scripts) {
+
+			open (my $fh, '<', $script -> {path}) or die "Can't read '$script->{path}': $!\n";
+			binmode ($fh);
+			$script -> {md5} = Digest::MD5 -> new -> addfile ($fh) -> hexdigest;
+			close $fh;
+
+			$script -> {name_md5} = "$script->{name}_$script->{md5}";
+			$name2def -> {$script -> {name_md5}} = 1;
+
+		}
+
+		warn " Files MD5 computed: " . Dumper (\@scripts) . ".\n" if $preconf -> {core_debug_require_scripts};
+
+		my ($filtered_scripts, $new_content_checksums) = checksum_filter ($checksum_kind . '_content', '', $name2def);
+
+		if (!$is_start_scripts && $script_type eq "updates") {
+
+			checksum_write ($checksum_kind, $new_checksums);
+			checksum_write ($checksum_kind. '_content', $new_content_checksums);
+
+			__profile_out ("require.scripts.$script_type");
+
+			warn " Dry run: checksums are stored without actually running scripts.\n" if $preconf -> {core_debug_require_scripts};
+
+			next;
+
+		}
+
+		@scripts = grep {$filtered_scripts -> {$_ -> {name_md5}}} @scripts;
+
+		if (@scripts == 0) {
+
+			warn " All 'new' $script_type have been run previously: content checksums were already stored.\n" if $preconf -> {core_debug_require_scripts};
+
+			__profile_out ("require.scripts.$script_type");
+
+			next;
+
+		}
 
 		@scripts = sort {
 			$DB_MODEL -> {tables} -> {$a -> {name}} -> {sql}
@@ -351,8 +398,8 @@ sub require_scripts_of_type ($) {
 
 		}
 
-
 		checksum_write ($checksum_kind, $new_checksums);
+		checksum_write ($checksum_kind. '_content', $new_content_checksums);
 
 		__profile_out ("require.scripts.$script_type");
 
@@ -412,7 +459,7 @@ sub script_log_signature {
 
 sub require_scripts {
 
-	return if $_REQUEST {__don_t_require_scripts};
+	return if $preconf -> {no_model_update} || $_REQUEST {__don_t_require_scripts};
 
 	__profile_in ('require.scripts');
 

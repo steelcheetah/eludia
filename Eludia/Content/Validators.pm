@@ -23,7 +23,7 @@ sub vld_snils {
 
 	local $SIG {__DIE__} = 'DEFAULT';
 
-	$value + 0 == 0 and $name1 ? die "#$name1#:$i18n->{snils_incorrect}" : return $i18n -> {snils_incorrect};
+	$value + 0 != 0 or $name1 ? die "#$name1#:$i18n->{snils_incorrect}" : return $i18n -> {snils_incorrect};
 
 	$value =~ /^\d{11}$/ or $name1 ? die "#$name1#:$i18n->{snils_digits_count_fail}" : return $i18n -> {snils_digits_count_fail};
 
@@ -63,16 +63,23 @@ sub vld_date {
 
 	my ($name, $nullable) = @_;
 
-	$name = "_" . $name;
+	my $name1;
+	my $value;
+	if ($name =~ /^[\-\.\d]+$/) {
+		$value = $name;
+	} else {
+		$name1 = '_' . $name if $name;
+		$value = $_REQUEST {$name1};
+	}
 
-	if (!$_REQUEST {$name} && $nullable) {
-		$_REQUEST {$name} = undef;
+	if (!$value && $nullable) {
+		$_REQUEST {$name1} = undef if $name1;
 		return undef;
 	}
 
 	my ($_sec, $_min, $_hour, $_mday, $_mon, $_year, $_wday, $_yday, $_isdst) = localtime (time);
 
-	my @dt = split /\D+/, $_REQUEST {$name};
+	my @dt = split /\D+/, $value;
 	@dt = reverse @dt[0..2] if ($dt [0] <= 31);
 
 	my ($year, $month, $day) = @dt;
@@ -91,21 +98,23 @@ sub vld_date {
 		$year += $century;
 	}
 	elsif ($year < 1000) {
-		die "#${name}#:$$i18n{wrong_year}\n";
+		$name1 ? die "#$name1#:$$i18n{wrong_year}" : return $i18n -> {wrong_year};
 	}
 
+	$month > 0 && $month < 13
+		or ($name1 ? die "#$name1#:$$i18n{wrong_month}" : return $i18n -> {wrong_month});
 
-	$month > 0  or die "#${name}#:$$i18n{wrong_month}\n";
-	$month < 13 or die "#${name}#:$$i18n{wrong_month}\n";
+	$day > 0 && $day < 32
+		or ($name1 ? die "#$name1#:$$i18n{wrong_day}" : return $i18n -> {wrong_day});
 
-	$day   > 0  or die "#${name}#:$$i18n{wrong_day}\n";
-	$day   < 32 or die "#${name}#:$$i18n{wrong_day}\n";
+	Date::Calc::check_date ($year, $month, $day)
+		or ($name1 ? die "#$name1#:$$i18n{wrong_date}" : return $i18n -> {wrong_date});
 
-	Date::Calc::check_date ($year, $month, $day) or die "#${name}#:$$i18n{wrong_date}\n";
+	if ($name1) {
+		$_REQUEST {$name1} = sprintf ('%04d-%02d-%02d', $year, $month, $day);
+	}
 
-	$_REQUEST {$name} = sprintf ('%04d-%02d-%02d', $year, $month, $day);
-
-	return ($year, $month, $day);
+	return undef;
 
 }
 
@@ -292,7 +301,7 @@ sub vld_inn {
 		return undef;
 	}
 
-    if (length $value == 10) {
+	if (length $value == 10) {
 		return vld_inn_10 ($name);
 	} elsif (length $value == 12) {
 		return vld_inn_12 ($name);
@@ -361,27 +370,39 @@ sub vld_ogrn {
 
 	my ($name, $nullable) = @_;
 
-	$name = "_" . $name;
+	my $name1;
+	my $value;
+	if ($name =~ /\D/) {
+		$name1 = '_' . $name;
+		$value = $_REQUEST {$name1};
+	} else {
+		$value = $name;
+	}
 
-	if (!$_REQUEST {$name} && $nullable) {
-		delete $_REQUEST {$name};
+	if (!$value && $nullable) {
+		$_REQUEST {$name1} = '' if $name1;
 		return undef;
 	}
 
 	local $SIG {__DIE__} = 'DEFAULT';
 
-	$_REQUEST {$name} =~ /^\d+$/ or return "#$name#:$i18n->{ogrn_digits_fail}";
+	$value =~ /^\d+$/
+		or ($name1 ? die "#$name1#:$i18n->{ogrn_digits_fail}" : return $i18n -> {ogrn_digits_fail});
 
-	if (length $_REQUEST {$name} == 13) {
-		(substr ($_REQUEST {$name}, 0, 12) % 11) % 10 == substr ($_REQUEST {$name}, -1, 1) or return "#$name#:$i18n->{ogrn_checksum_fail}";
-		$_REQUEST {$name} =~ /^[125]/    or die "#$name#:$i18n->{ogrn_first_digit_fail}";
+	if (length $value == 13) {
+		(substr ($value, 0, 12) % 11) % 10 == substr ($value, -1, 1)
+			or ($name1 ? die "#$name1#:$i18n->{ogrn_checksum_fail}" : return $i18n -> {ogrn_checksum_fail});
+		$value =~ /^[125]/
+			or ($name1 ? die "#$name1#:$i18n->{ogrn_first_digit_fail}" : return $i18n -> {ogrn_first_digit_fail});
 	}
-	elsif (length $_REQUEST {$name} == 15) {
-		(substr ($_REQUEST {$name}, 0, 14) % 13) % 10 == substr ($_REQUEST {$name}, -1, 1) or return "#$name#:$i18n->{ogrnip_checksum_fail}";
-		$_REQUEST {$name} =~ /^3/    or die "#$name#:$i18n->{ogrn_first_digit_fail}";
+	elsif (length $value == 15) {
+		(substr ($value, 0, 14) % 13) % 10 == substr ($value, -1, 1)
+			or ($name1 ? die "#$name1#:$i18n->{ogrnip_checksum_fail}" : return $i18n -> {ogrnip_checksum_fail});
+		$value =~ /^3/
+			or ($name1 ? die "#$name1#:$i18n->{ogrnip_first_digit_fail}" : return $i18n -> {ogrnip_first_digit_fail});
 	}
 	else {
-		return "#$name#:$i18n->{ogrn_digits_count_alt}";
+		$name1 ? die "#$name1#:$i18n->{ogrn_digits_count_alt}" : return $i18n -> {ogrn_digits_count_alt};
 	}
 
 	return undef;
@@ -552,6 +573,8 @@ sub js_yes {
 	}
 
 	my $method = $length > 1000 ? 'POST' : 'GET';
+
+	$message =~ s/\\?"/\\"/g;
 
 	out_html ({}, <<EOH);
 <html>

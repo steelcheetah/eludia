@@ -16,7 +16,7 @@ sub draw_form_field_date {
 	if (defined $options -> {detail}) {
 
 		$options -> {value_src} = "\$('#input_$options->{name}')[0].value";
-		$options -> {onClose} .= js_detail ($options);
+		$options -> {onChange} .= js_detail ($options);
 
 	}
 

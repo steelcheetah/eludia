@@ -452,7 +452,7 @@ sub draw_text_cell {
 	if ($data -> {picture}) {
 		my $picture = $_SKIN -> _picture ($data -> {picture});
 		$data -> {attributes} -> {style} .= "mso-number-format:$picture;";
-		$data -> {attributes} -> {'x:num'} = $data -> {attributes} -> {title} if ($data -> {attributes} -> {title} =~ /^-?\d+.?\d*$/);
+		$data -> {attributes} -> {'x:num'} = $data -> {attributes} -> {title};
 	}
 	elsif ($data -> {label} =~ /^\d\d\.\d\d\.\d\d(\d\d)?$/) {
 		$data -> {attributes} -> {style} .= "mso-number-format:'Short date';";
@@ -703,6 +703,10 @@ sub start_page {
 		<p>$_USER->{label}</p>
 		<p>@{[ sprintf ('%02d.%02d.%04d %02d:%02d:%02d', (Date::Calc::Today_and_Now) [2,1,0,3,4,5]) ]}</p>
 	};
+
+	if ($_REQUEST_VERBATIM{__salt} || $_REQUEST_VERBATIM{salt}) {
+		push @{$r->{_headers}{'Set-Cookie'}}, "download_salt=" . ($_REQUEST_VERBATIM{__salt} || $_REQUEST_VERBATIM{salt});
+	}
 
 	$r -> content_type ('application/octet-stream');
 	$r -> header_out ('P3P' => 'CP="IDC DSP COR ADM DEVi TAIi PSA PSD IVAi IVDi CONi HIS OUR IND CNT"');

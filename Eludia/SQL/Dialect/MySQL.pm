@@ -154,7 +154,7 @@ sub sql_do {
 	sql_safe_execute ($st, \@params);
 
 	$st -> finish ();
-
+if ($preconf -> {core_sql_parse_debug}) { warn 'SQL: ', $sql; } # mysql-запрос
 	if ($conf -> {'db_temporality'} && $_REQUEST {_id_log}) {
 
 		my $insert_sql = '';
@@ -237,7 +237,9 @@ sub sql_select_all_cnt {
 
 	}
 
-	if ($SQL_VERSION -> {number_tokens} -> [0] > 3) {
+	$options -> {sql_calc_found_rows} //= $SQL_VERSION -> {number_tokens} -> [0] > 3;
+
+	if ($options -> {sql_calc_found_rows}) {
 		$sql =~ s{SELECT}{SELECT SQL_CALC_FOUND_ROWS}i;
 	}
 
@@ -253,14 +255,14 @@ sub sql_select_all_cnt {
 
 	my $cnt = 0;
 
-	if ($SQL_VERSION -> {number_tokens} -> [0] > 3) {
+	if ($options -> {sql_calc_found_rows}) {
 
 		$cnt = $db -> selectrow_array ("select found_rows()");
 
 	}
 	else {
 
-		$sql =~ s{SELECT.*?FROM}{SELECT COUNT(*) FROM}ism;
+		$sql =~ s{SELECT.*?\bFROM\b}{SELECT COUNT(*) FROM}ism;
 		if ($sql =~ s{\bLIMIT\b.*}{}ism) {
 #			pop @params;
 		}
@@ -564,48 +566,6 @@ sub sql_last_insert_id {
 
 ################################################################################
 
-sub sql_do_update {
-
-	my ($table_name, $field_list, $options) = @_;
-
-	ref $options eq HASH or $options = {
-		stay_fake => $options,
-		id        => $_REQUEST {id},
-	};
-
-
-	$options -> {id} ||= $_REQUEST {id};
-
-	my $item = sql_select_hash ($table_name, $options -> {id});
-
-	my $have_fake_param;
-	my $sql = join ', ', map {$have_fake_param ||= ($_ eq 'fake'); "$_ = ?"} @$field_list;
-	$options -> {stay_fake} or $have_fake_param or $sql .= ', fake = 0';
-
-	my $table = $DB_MODEL -> {tables} -> {$table_name};
-
-	foreach my $f (@$field_list) {
-		$_REQUEST {"_$f"} = $_REQUEST {"_$f"} eq '' ? undef : $_REQUEST {"_$f"} + 0
-			if ($table -> {columns} -> {$f} -> {TYPE_NAME} =~ /.*int.*/);
-
-		$_REQUEST {"_$f"} = $_REQUEST {"_$f"} eq '' ? undef : $_REQUEST {"_$f"}
-			if ($table -> {columns} -> {$f} -> {TYPE_NAME} =~ /.*(date|decimal).*/);
-	}
-
-	$sql = "UPDATE $table_name SET $sql WHERE id = ?";
-	my @params = @_REQUEST {(map {"_$_"} @$field_list)};
-	push @params, $options -> {id};
-
-	sql_do ($sql, @params);
-
-	if ($item -> {fake} == -1 && $conf -> {core_undelete_to_edit} && !$options -> {stay_fake}) {
-		do_undelete_DEFAULT ($table_name, $options -> {id});
-	}
-
-}
-
-################################################################################
-
 sub sql_do_insert {
 
 	my ($table_name, $pairs) = @_;
@@ -648,11 +608,31 @@ EOS
 
 	}
 
+	my $table = $DB_MODEL -> {tables} -> {$table_name};
+
 	foreach my $field (keys %$pairs) {
-		my $value = $pairs -> {$field};
+
 		my $comma = @params ? ', ' : '';
 		$fields .= "$comma $field";
 		$args   .= "$comma ?";
+
+		my $value = $pairs -> {$field};
+
+		if (exists $table -> {columns} -> {$field} -> {NULLABLE}
+			&& $table -> {columns} -> {$field} -> {NULLABLE} == 0
+			&& exists $table -> {columns} -> {$field} -> {COLUMN_DEF}
+			&& !defined $value
+		) {
+
+			$value = $table -> {columns} -> {$field} -> {COLUMN_DEF};
+
+		}
+
+		$value    = $value eq '' ? undef : $value + 0
+			if $table -> {columns} -> {$field} -> {TYPE_NAME} =~ /.*(int|decimal).*/;
+		$value    = $value eq '' || $value lt '0001-01-01' ? undef : $value
+			if $table -> {columns} -> {$field} -> {TYPE_NAME} =~ /.*date.*/;
+
 		push @params, $value;
 	}
 
@@ -860,6 +840,7 @@ sub sql_select_loop {
 	$sql .= " # type='$_REQUEST{type}', id='$_REQUEST{id}', action='$_REQUEST{action}', user=$_USER->{id}, process=$$";
 
 	my $st = $db -> prepare ($sql);
+
 	sql_safe_execute ($st, \@params);
 
 	local $i;

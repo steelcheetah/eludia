@@ -433,6 +433,8 @@ sub check_href {
 
 				next if $k =~ /^_/ && !$_INHERITABLE_PARAMETER_NAMES -> {$k};
 				next if             $_NONINHERITABLE_PARAMETER_NAMES -> {$k};
+
+				utf8::downgrade($_REQUEST {$k});
 				$h {$k} = uri_escape ($_REQUEST {$k});
 				$h {$k} = encode_entities ($h {$k}, '"');
 
@@ -647,7 +649,7 @@ sub draw_form {
 
 	}
 
-	$options -> {no_esc}    = 1 if $apr -> param ('__last_query_string') < 0 && !$_REQUEST {__edit};
+	$options -> {no_esc}    = 1 if $apr && $apr -> param ('__last_query_string') < 0 && !$_REQUEST {__edit};
 	$options -> {target}  ||= 'invisible';
 	$options -> {method}  ||= 'post';
 	$options -> {target}  ||= 'invisible';
@@ -890,6 +892,13 @@ sub draw_form_field_of_type {
 
 ################################################################################
 
+sub file_download_href {
+	my ($field, $data) = @_;
+	return {action => 'download', _name => $field -> {name}};
+}
+
+################################################################################
+
 sub draw_form_field {
 
 	my ($field, $data, $form_options) = @_;
@@ -914,10 +923,10 @@ sub draw_form_field {
 	{
 
 		if ($field -> {type} eq 'file') {
-			$field -> {href}      ||= {action => 'download', _name => $field -> {name}};
+			$field -> {href}      ||= file_download_href ($field, $data);
 			$field -> {file_name} ||= $field -> {name} . '_name';
 			$field -> {name}        = $field -> {file_name};
-			$field -> {target}    ||= 'invisible';
+			$field -> {target}    ||= '_self';
 		}
 		elsif ($field -> {type} eq 'checkbox') {
 			$field -> {value} = $data -> {$field -> {name}} || $field -> {checked} ? $i18n -> {yes} : $i18n -> {no};
@@ -954,7 +963,8 @@ sub draw_form_field {
 
 		}
 		else {
-			$field -> {value} ||= $data -> {$field -> {name}};
+			$field -> {value} = $data -> {$field -> {name}}
+				if (!defined $field -> {value});
 		}
 
 
@@ -991,15 +1001,15 @@ sub draw_form_field {
 	$conf -> {kb_options_focus} ||= $conf -> {kb_options_buttons};
 	$conf -> {kb_options_focus} ||= {ctrl => 1, alt => 1};
 
-	register_hotkey ($field, 'focus', '_' . $field -> {name}, $conf -> {kb_options_focus});
+	# register_hotkey ($field, 'focus', '_' . $field -> {name}, $conf -> {kb_options_focus});
 
 	$field -> {label} .= $field -> {label} ? ':' : '&nbsp;';
 
 	$field -> {colspan} ||= $_REQUEST {__max_cols} - 1;
 
-	$field -> {state}     = $data -> {fake} == -1 ? 'deleted' : $_REQUEST {__read_only} ? 'passive' : 'active';
+	$field -> {state}   ||= $data -> {fake} == -1 ? 'deleted' : $_REQUEST {__read_only} ? 'passive' : 'active';
 
-	$field -> {label_width} = '20%' unless $field -> {is_slave};
+	$field -> {label_width} ||= '20%' unless $field -> {is_slave};
 
 	$_REQUEST {__no_navigation} ||= $_REQUEST {__only_field};
 
@@ -1151,6 +1161,7 @@ sub draw_toolbar {
 			}
 
 			$button -> {type} ||= 'button';
+			$button -> {id_table} ||= $options -> {id_table};
 
 			$_REQUEST {__toolbar_inputs} .= "$button->{name}," if $button -> {type} =~ /^input_/;
 
@@ -1308,8 +1319,8 @@ sub draw_esc_toolbar {
 		@{$options -> {additional_buttons}},
 		{
 			preset => 'cancel',
-			href => $options -> {href},
-			off  => $options -> {no_esc},
+			href   => $options -> {href},
+			off    => $options -> {no_esc},
 		},
 		@{$options -> {right_buttons}},
 	])
@@ -1339,37 +1350,39 @@ sub draw_ok_esc_toolbar {
 		@{$options -> {left_buttons}},
 		{
 			preset => 'ok',
-			label => $options -> {label_ok},
-			href => $_SKIN -> __submit_href ($name),
-			off  => $_REQUEST {__read_only} || $options -> {no_ok},
+			label  => $options -> {label_ok},
+			href   => $_SKIN -> __submit_href ($name),
+			off    => $_REQUEST {__read_only} || $options -> {no_ok},
 			(exists $options -> {confirm_ok} ? (confirm => $options -> {confirm_ok}) : ()),
 		},
 		{
 			preset => 'edit',
-			label => $options -> {label_edit},
-			href  => create_url (
+			label  => $options -> {label_edit},
+			href   => create_url (
 				__last_query_string         => $_REQUEST {__last_last_query_string},
 				__last_scrollable_table_row => $_REQUEST {__windows_ce} ? undef : $_REQUEST {__last_scrollable_table_row},
 				__edit                      => 1,
 			),
-			off   => ((!$conf -> {core_auto_edit} && !$_REQUEST{__auto_edit}) || !$_REQUEST{__read_only} || $options -> {no_edit}),
+			off    => ((!$conf -> {core_auto_edit} && !$_REQUEST{__auto_edit}) || !$_REQUEST{__read_only} || $options -> {no_edit}),
 		},
 		{
 			preset => 'choose',
-			label => $options -> {label_choose},
-			href  => js_set_select_option ('', {
+			label  => $options -> {label_choose},
+			href   => js_set_select_option ('', {
 				id       => $data -> {id},
 				label    => $options -> {choose_select_label} || $data -> {label},
 				question => $data -> {question},
 			}),
-			off   => (!$_REQUEST {__read_only} || !$_REQUEST {select}) || $_REQUEST {"__select_type_" . $_REQUEST {select}} ne $_REQUEST {type},
+			off    => (!$_REQUEST {__read_only} || !$_REQUEST {select})
+				|| $_REQUEST {"__select_type_" . $_REQUEST {select}} ne $_REQUEST {type}
+				|| $options -> {no_choose},
 		},
 		@{$options -> {additional_buttons}},
 		{
 			preset => 'cancel',
-			label => $options -> {label_cancel},
-			href => $options -> {href},
-			off  => $options -> {no_esc},
+			label  => $options -> {label_cancel},
+			href   => $options -> {href},
+			off    => $options -> {no_esc},
 		},
 		@{$options -> {right_buttons}},
 	 ])
@@ -1387,7 +1400,7 @@ sub draw_close_toolbar {
 		@{$options -> {additional_buttons}},
 		{
 			preset => 'close',
-			href => 'javascript: window.parent.close()',
+			href   => 'javascript: window.parent.close()',
 		},
 		@{$options -> {right_buttons}},
 	 ])
@@ -1568,6 +1581,7 @@ sub draw_cells {
 		check_href ($options) ;
 		$options -> {a_class} ||= 'row-cell';
 	}
+
 	push @{$i -> {__href}}, $options -> {href};
 	push @{$i -> {__target}}, $options -> {target};
 
@@ -1646,7 +1660,7 @@ sub draw_cells {
 			$cell -> {a_class} ||= $options -> {a_class};
 			$cell -> {target}  ||= $options -> {target} || '_self';
 
-			unless (exists $cell -> {href} || $cell -> {no_href}) {
+			unless (exists $cell -> {href}) {
 				$cell -> {href} = $options -> {href};
 				$cell -> {no_check_href} = 1;
 			}
@@ -1675,7 +1689,7 @@ sub draw_cells {
 
 	foreach my $cell (@cells) {
 
-		$cell -> {href} ||= $options -> {href} unless $cell -> {no_href};
+		$cell -> {href} ||= $options -> {href};
 
 		delete $cell -> {editor} if (exists $_REQUEST {__edited_cells_table} && ($i -> {fake} != 0 || $_REQUEST {xls}));
 
@@ -2406,6 +2420,7 @@ EOJS
 	if (ref $options -> {top_toolbar} eq ARRAY) {
 
 		$options -> {top_toolbar} -> [0] -> {_list} = $list;
+		$options -> {top_toolbar} -> [0] -> {id_table} = $options -> {id_table};
 		$options -> {top_toolbar} = draw_toolbar (@{ $options -> {top_toolbar} });
 	}
 
@@ -2758,6 +2773,8 @@ sub draw_node {
 
 	my @buttons;
 
+	my $any_buttons = 0;
+
 	foreach my $button (@{$_ [0]}) {
 
 		next if $button -> {off};
@@ -2778,9 +2795,10 @@ sub draw_node {
 
 		push @buttons, $button;
 
+		$any_buttons ||= $button && $button ne 'BREAK';
 	}
 
-	$i -> {__menu} = draw_vert_menu ($i, \@buttons) if ((grep {$_ ne BREAK} @buttons) > 0);
+	$i -> {__menu} = draw_vert_menu ($i, \@buttons) if $any_buttons;
 
 	return 	$_SKIN -> draw_node ($options, $i);
 
@@ -2970,6 +2988,10 @@ sub draw_error_page {
 
 	my ($page, $error) = @_;
 
+	if ($preconf -> {_} -> {own_db}) {
+		$db = delete $preconf -> {_} -> {own_db};
+	}
+
 	ref $error or $error = investigate_error ({error => $error});
 
 	$error -> {label} = $i18n -> {$error -> {label}}
@@ -3058,7 +3080,7 @@ sub lrt_start {
 
 sub lrt_finish {
 
-	my ($banner, $href, $options) = @_;
+	my ($banner, $href, $options) = ref $_ [0] eq 'HASH' ? ('', @_) : @_;
 
 	if ($_USER -> {peer_server}) {
 
@@ -3261,6 +3283,8 @@ sub out_html {
 
 	my ($options, $html) = @_;
 
+	return if $ENV {NO_SETUP_REQUEST};
+
 	$html and !$_REQUEST {__response_sent} or return;
 
 	__profile_in ('core.out_html');
@@ -3436,7 +3460,7 @@ sub check_static_files {
 
 	__profile_in ('core.check_static_files');
 
-	my $skin_root = $r -> document_root () . $_REQUEST {__static_url};
+	my $skin_root = $preconf -> {_} -> {docroot} . $_REQUEST {__static_url};
 
 	-d $skin_root or mkdir $skin_root or die "Can't create $skin_root: $!";
 
@@ -3470,7 +3494,7 @@ sub check_static_files {
 		File::Copy::copy ($static_path . $src, $skin_root . '/' . $`) or die "can't copy ${static_path}${src} to ${skin_root}/${`}: $!";
 	}
 
-	my $favicon = $r -> document_root () . '/i/favicon.ico';
+	my $favicon = $preconf -> {_} -> {docroot} . '/i/favicon.ico';
 
 	if (-f $favicon) {
 
@@ -3478,7 +3502,7 @@ sub check_static_files {
 
 	}
 
-	my $over_root = $r -> document_root () . '/i/skins/' . $_REQUEST {__skin};
+	my $over_root = $preconf -> {_} -> {docroot} . '/i/skins/' . $_REQUEST {__skin};
 
 	if (-d $over_root) {
 

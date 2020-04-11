@@ -526,49 +526,6 @@ sub sql_last_insert_id {
 
 ################################################################################
 
-sub sql_do_update {
-
-	my ($table_name, $field_list, $options) = @_;
-
-	ref $options eq HASH or $options = {
-		stay_fake => $options,
-		id        => $_REQUEST {id},
-	};
-
-
-	$options -> {id} ||= $_REQUEST {id};
-
-	my $have_fake_param;
-	my $sql = join ', ', map {$have_fake_param ||= ($_ eq 'fake'); "$_ = ?"} @$field_list;
-	$options -> {stay_fake} or $have_fake_param or $sql .= ', fake = 0';
-
-	my $table = $DB_MODEL -> {tables} -> {$table_name};
-
-	foreach my $f (@$field_list) {
-		$_REQUEST {"_$f"} = $_REQUEST {"_$f"} eq '' ? undef : $_REQUEST {"_$f"} + 0
-			if ($table -> {columns} -> {$f} -> {TYPE_NAME} =~ /.*int.*/);
-
-		$_REQUEST {"_$f"} = $_REQUEST {"_$f"} eq '' ? undef : $_REQUEST {"_$f"}
-			if ($table -> {columns} -> {$f} -> {TYPE_NAME} =~ /.*(date|decimal).*/);
-	}
-
-	$sql = "UPDATE $table_name SET $sql WHERE id = ?";
-	my @params = @_REQUEST {(map {"_$_"} @$field_list)};
-
-	push @params, $options -> {id};
-
-	# ѕри передаче пустой строки в численное поле генерируетс€ ошибка преобразовани€ типов
-	if ($table_name eq 'core_log')
-	{
-		$params[2] = 0 if $params[2] eq '';
-	}
-
-	sql_do ($sql, @params);
-
-}
-
-################################################################################
-
 sub sql_do_insert {
 
 	my ($table_name, $pairs) = @_;
@@ -617,21 +574,33 @@ EOS
 	my $table = $DB_MODEL -> {tables} -> {$table_name};
 
 	foreach my $field (keys %$pairs) {
+
 		if ($field eq 'id' && $statement eq 'INSERT') {
 			$statement = "SET IDENTITY_INSERT $table_name ON; INSERT";
 			$is_set_identity_insert = 1;
 		}
 
-		$pairs -> {$field} = $pairs -> {$field} eq '' ? undef : $pairs -> {$field} + 0
-			if ($table -> {columns} -> {$field} -> {TYPE_NAME} =~ /.*int.*/);
-
-		$pairs -> {$field} = $pairs -> {$field} eq '' ? undef : $pairs -> {$field}
-			if ($table -> {columns} -> {$field} -> {TYPE_NAME} =~ /.*(date|decimal).*/);
-
-		my $value = $pairs -> {$field};
 		my $comma = @params ? ', ' : '';
 		$fields .= "$comma $field";
 		$args   .= "$comma ?";
+
+		my $value = $pairs -> {$field};
+
+		if (exists $table -> {columns} -> {$field} -> {NULLABLE}
+			&& $table -> {columns} -> {$field} -> {NULLABLE} == 0
+			&& exists $table -> {columns} -> {$field} -> {COLUMN_DEF}
+			&& !defined $value
+		) {
+
+			$value = $table -> {columns} -> {$field} -> {COLUMN_DEF};
+
+		}
+
+		$value    = $value eq '' ? undef : $value + 0
+			if $table -> {columns} -> {$field} -> {TYPE_NAME} =~ /.*(int|decimal).*/;
+		$value    = $value eq '' || $value lt '0001-01-01' ? undef : $value
+			if $table -> {columns} -> {$field} -> {TYPE_NAME} =~ /.*date.*/;
+
 		push @params, $value;
 	}
 

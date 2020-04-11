@@ -13,6 +13,8 @@ sub get_request {
 	our %_COOKIES = CGI::Simple::Cookie -> parse ($r -> {headers_in} -> {Cookie});
 	our %_REQUEST = %{$apr -> parms};
 
+	delete $_REQUEST{__suicide} if (defined($_REQUEST{__suicide}));
+
 }
 
 ################################################################################
@@ -26,6 +28,8 @@ sub send_http_header {
 ################################################################################
 
 sub set_cookie {
+
+	$ENV {NO_SETUP_REQUEST} and return;
 
 	my $cookie = CGI::Simple::Cookie -> new (@_);
 
@@ -287,16 +291,19 @@ sub parms {
 	my $self = shift;
 
 	my %vars = ();
-
 	my @names = $self -> {Q} -> param;
 
 	foreach my $name (@names) {
-		my @v         = $self -> {Q} -> param ($name);
-		$vars {$name} = $v [-1];
+		my @v = $self -> {Q} -> param ($name);
+
+		if (@v > 1 && $name =~ /file/) {
+			$vars {$name . '[]'} = \@v;
+		} else {
+			$vars {$name} = $v [-1];
+		}
 	}
 
 	return \%vars;
-
 }
 
 ################################################################################

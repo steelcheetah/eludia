@@ -12,9 +12,9 @@ sub _sqlite_format_datetime {
 ################################################################################
 
 sub _sqlite_parse_datetime {
-	my ($s) = @_;	
-	$s =~ s{[^\d]}{}g;	
-	$s =~ /(\d\d\d\d)(\d\d)(\d\d)(\d\d)(\d\d)(\d\d)/;	
+	my ($s) = @_;
+	$s =~ s{[^\d]}{}g;
+	$s =~ /(\d\d\d\d)(\d\d)(\d\d)(\d\d)(\d\d)(\d\d)/;
 	return ($6, $5, $4 , $3, $2 - 1, $1 - 1900);
 }
 
@@ -25,19 +25,19 @@ sub sql_version {
 	$db -> func ('REPLACE', 3, sub { my ($s, $from, $to) = @_; $s =~ s{$from}{$to}g; return $s }, 'create_function');
 	$db -> func ('CONCAT',  2, sub { return $_[0] . $_[1] }, 'create_function');
 	$db -> func ('CONCAT',  3, sub { return $_[0] . $_[1] . $_[2] }, 'create_function');
-	$db -> func ('NOW',     0, sub { return POSIX::strftime ('%Y-%m-%d %H:%M:%S', localtime (time)) }, 'create_function');	
-	$db -> func ('DATE_FORMAT', 2, sub { return _sqlite_format_datetime ($_[1], _sqlite_parse_datetime ($_[0])) }, 'create_function');	
+	$db -> func ('NOW',     0, sub { return POSIX::strftime ('%Y-%m-%d %H:%M:%S', localtime (time)) }, 'create_function');
+	$db -> func ('DATE_FORMAT', 2, sub { return _sqlite_format_datetime ($_[1], _sqlite_parse_datetime ($_[0])) }, 'create_function');
 
 	my $version = $SQL_VERSION;
-	
+
 	$version -> {string} = 'SQLite ' . sql_select_scalar ('SELECT sqlite_version(*)');
-	
+
 	($version -> {number}) = $version -> {string} =~ /([\d\.]+)/;
-	
+
 	$version -> {number_tokens} = [split /\./, $version -> {number}];
-	
+
 	return $version;
-	
+
 }
 
 ################################################################################
@@ -61,11 +61,11 @@ sub sql_prepare {
 sub sql_do_refresh_sessions {
 
 	my $timeout = sql_sessions_timeout_in_minutes ();
-	
+
 	my @now = Date::Calc::Today_and_Now;
 
 	my $now = sprintf ('%04d-%02d-%02d %02d:%02d:%02d', @now);
-	
+
 	my @new = Date::Calc::Add_Delta_YMDHMS (@now, 0, 0, 0, 0, 1 - $timeout, 0);
 
 	my $new = sprintf ('%04d-%02d-%02d %02d:%02d:%02d', @new);
@@ -73,9 +73,9 @@ sub sql_do_refresh_sessions {
 	sql_do ("UPDATE $conf->{systables}->{sessions} SET ts = ? WHERE id = ? AND ts < ?", $ts, $_REQUEST {sid}, $new);
 
 	my @old = Date::Calc::Add_Delta_YMDHMS (@now, 0, 0, 0, 0, - $timeout, 0);
-	
+
 	my $old = sprintf ('%04d-%02d-%02d %02d:%02d:%02d', @old);
-	
+
 	sql_do ("DELETE FROM $conf->{systables}->{sessions} WHERE ts < ?", $old);
 
 }
@@ -87,7 +87,7 @@ sub sql_do {
 	my ($sql, @params) = @_;
 	my $st = sql_prepare ($sql);
 	$st -> execute (@params);
-	$st -> finish;	
+	$st -> finish;
 }
 
 ################################################################################
@@ -95,39 +95,39 @@ sub sql_do {
 sub sql_select_all_cnt {
 
 	my ($sql, @params) = @_;
-	
+
 	my $options = {};
 	if (@params > 0 and ref ($params [-1]) eq HASH) {
 		$options = pop @params;
 	}
-	
+
 	if ($options -> {fake}) {
-	
+
 		my $where = 'WHERE ';
 		my $fake  = $_REQUEST {fake} || 0;
-	
+
 		foreach my $table (split /\,/, $options -> {fake}) {
 			$where .= "$table.fake IN ($fake) AND ";
-		}	
-		
+		}
+
 		$sql =~ s{where}{$where}i;
-			
+
 	}
 
 	my $st = sql_prepare ($sql);
 	$st -> execute (@params);
-	my $result = $st -> fetchall_arrayref ({});	
+	my $result = $st -> fetchall_arrayref ({});
 	$st -> finish;
 
-	my $cnt = 0;	
+	my $cnt = 0;
 
 
 	$sql =~ s{SELECT.*?FROM}{SELECT COUNT(*) FROM}ism;
-	
+
 	if ($sql =~ s{\bLIMIT\b.*}{}ism) {
 #		pop @params;
 	}
-	
+
 	$st = sql_prepare ($sql);
 	$st -> execute (@params);
 
@@ -137,7 +137,7 @@ sub sql_select_all_cnt {
 	else {
 		$cnt = $st -> fetchrow_array ();
 	}
-			
+
 	return ($result, $cnt);
 
 }
@@ -153,26 +153,26 @@ sub sql_select_all {
 	if (@params > 0 and ref ($params [-1]) eq HASH) {
 		$options = pop @params;
 	}
-	
+
 	if ($options -> {fake}) {
-	
+
 		my $where = 'WHERE ';
 		my $fake  = $_REQUEST {fake} || 0;
-	
+
 		foreach my $table (split /\,/, $options -> {fake}) {
 			$where .= "$table.fake IN ($fake) AND ";
-		}	
-		
+		}
+
 		$sql =~ s{where}{$where}i;
-			
+
 	}
 
 
 	my $st = sql_prepare ($sql);
 	$st -> execute (@params);
-	my $result = $st -> fetchall_arrayref ({});	
+	my $result = $st -> fetchall_arrayref ({});
 	$st -> finish;
-	
+
 	return $result;
 
 }
@@ -182,7 +182,7 @@ sub sql_select_all {
 sub sql_select_col {
 
 	my ($sql, @params) = @_;
-	
+
 	my @result = ();
 	my $st = sql_prepare ($sql);
 	$st -> execute (@params);
@@ -190,7 +190,7 @@ sub sql_select_col {
 		push @result, @r;
 	}
 	$st -> finish;
-	
+
 	return @result;
 
 }
@@ -200,13 +200,13 @@ sub sql_select_col {
 sub sql_select_hash {
 
 	my ($sql_or_table_name, @params) = @_;
-	
+
 	if ($sql_or_table_name !~ /^\s*SELECT/i) {
-	
+
 		my $id = $_REQUEST {id};
 
-		my $field = 'id'; 
-		
+		my $field = 'id';
+
 		if (@params) {
 			if (ref $params [0] eq HASH) {
 				($field, $id) = each %{$params [0]};
@@ -214,26 +214,26 @@ sub sql_select_hash {
 				$id = $params [0];
 			}
 		}
-	
+
 		@params = ({}) if (@params == 0);
-		
+
 		$_REQUEST {__the_table} = $sql_or_table_name;
 
 		return sql_select_hash ("SELECT * FROM $sql_or_table_name WHERE $field = ?", $id);
 
-	}	
-	
+	}
+
 	if (!$_REQUEST {__the_table} && $sql_or_table_name =~ /\s+FROM\s+(\w+)/sm) {
-	
+
 		$_REQUEST {__the_table} = $1;
-	
+
 	}
 
 	my $st = sql_prepare ($sql_or_table_name);
 	$st -> execute (@params);
 	my $result = $st -> fetchrow_hashref ();
 	$st -> finish;
-	
+
 	return $result;
 
 }
@@ -247,7 +247,7 @@ sub sql_select_array {
 	$st -> execute (@params);
 	my @result = $st -> fetchrow_array ();
 	$st -> finish;
-	
+
 	return wantarray ? @result : $result [0];
 
 }
@@ -261,7 +261,7 @@ sub sql_select_scalar {
 	$st -> execute (@params);
 	my @result = $st -> fetchrow_array ();
 	$st -> finish;
-	
+
 	return $result [0];
 
 }
@@ -269,9 +269,9 @@ sub sql_select_scalar {
 ################################################################################
 
 sub sql_select_path {
-	
+
 	my ($table_name, $id, $options) = @_;
-	
+
 	$options -> {name} ||= 'name';
 	$options -> {type} ||= $table_name;
 	$options -> {id_param} ||= 'id';
@@ -280,19 +280,19 @@ sub sql_select_path {
 
 	my @path = ();
 
-	while ($parent) {	
+	while ($parent) {
 		my $r = sql_select_hash ("SELECT id, parent, $$options{name} as name, '$$options{type}' as type, '$$options{id_param}' as id_param FROM $table_name WHERE id = ?", $parent);
 		$r -> {cgi_tail} = $options -> {cgi_tail},
-		unshift @path, $r;		
-		$parent = $r -> {parent};	
+		unshift @path, $r;
+		$parent = $r -> {parent};
 	}
-	
+
 	if ($options -> {root}) {
 		unshift @path, {
-			id => 0, 
-			parent => 0, 
-			name => $options -> {root}, 
-			type => $options -> {type}, 
+			id => 0,
+			parent => 0,
+			name => $options -> {root},
+			type => $options -> {type},
 			id_param => $options -> {id_param},
 			cgi_tail => $options -> {cgi_tail},
 		};
@@ -307,21 +307,21 @@ sub sql_select_path {
 sub sql_select_subtree {
 
 	my ($table_name, $id, $options) = @_;
-	
+
 	my @ids = ($id);
-	
+
 	while (TRUE) {
-	
+
 		my $ids = join ',', @ids;
-	
+
 		my @new_ids = sql_select_col ("SELECT id FROM $table_name WHERE parent IN ($ids) AND id NOT IN ($ids)");
-		
+
 		last unless @new_ids;
-	
+
 		push @ids, @new_ids;
-	
+
 	}
-	
+
 	return @ids;
 
 }
@@ -334,38 +334,10 @@ sub sql_last_insert_id {
 
 ################################################################################
 
-sub sql_do_update {
-
-	my ($table_name, $field_list, $options) = @_;
-
-	ref $options eq HASH or $options = {
-		stay_fake => $options,
-		id        => $_REQUEST {id},
-	};
-
-	$options -> {id} ||= $_REQUEST {id};
-	
-	my $item = sql_select_hash ($table_name, $options -> {id});
-
-	my $sql = join ', ', map {"$_ = ?"} @$field_list;
-	$options -> {stay_fake} or $sql .= ', fake = 0';
-	$sql = "UPDATE $table_name SET $sql WHERE id = ?";	
-	my @params = @_REQUEST {(map {"_$_"} @$field_list)};	
-	push @params, $options -> {id};
-	sql_do ($sql, @params);
-	
-	if ($item -> {fake} == -1 && $conf -> {core_undelete_to_edit} && !$options -> {stay_fake}) {
-		do_undelete_DEFAULT ($table_name, $options -> {id});
-	}
-
-}
-
-################################################################################
-
 sub sql_do_insert {
 
 	my ($table_name, $pairs) = @_;
-		
+
 	delete_fakes ($table_name);
 
 	my $fields = '';
@@ -374,15 +346,36 @@ sub sql_do_insert {
 
 	$pairs -> {fake} = $_REQUEST {sid} unless exists $pairs -> {fake};
 
-	foreach my $field (keys %$pairs) { 
-		my $comma = @params ? ', ' : '';	
+	my $table = $DB_MODEL -> {tables} -> {$table_name};
+
+	foreach my $field (keys %$pairs) {
+
+		my $comma = @params ? ', ' : '';
 		$fields .= "$comma $field";
 		$args   .= "$comma ?";
-		push @params, $pairs -> {$field};	
+
+		my $value = $pairs -> {$field};
+
+		if (exists $table -> {columns} -> {$field} -> {NULLABLE}
+			&& $table -> {columns} -> {$field} -> {NULLABLE} == 0
+			&& exists $table -> {columns} -> {$field} -> {COLUMN_DEF}
+			&& !defined $value
+		) {
+
+			$value = $table -> {columns} -> {$field} -> {COLUMN_DEF};
+
+		}
+
+		$value    = $value eq '' ? undef : $value + 0
+			if $table -> {columns} -> {$field} -> {TYPE_NAME} =~ /.*(int|decimal).*/;
+		$value    = $value eq '' || $value lt '0001-01-01' ? undef : $value
+			if $table -> {columns} -> {$field} -> {TYPE_NAME} =~ /.*date.*/;
+
+		push @params, $value;
 	}
-	
-	sql_do ("INSERT INTO $table_name ($fields) VALUES ($args)", @params);	
-	
+
+	sql_do ("INSERT INTO $table_name ($fields) VALUES ($args)", @params);
+
 	return want ('VOID') ? undef : sql_last_insert_id ();
 
 }
@@ -392,15 +385,15 @@ sub sql_do_insert {
 sub sql_do_delete {
 
 	my ($table_name, $options) = @_;
-		
+
 	if (ref $options -> {file_path_columns} eq ARRAY) {
-		
+
 		map {sql_delete_file ({table => $table_name, path_column => $_})} @{$options -> {file_path_columns}}
-		
+
 	}
-	
+
 	our %_OLD_REQUEST = %_REQUEST;
-	
+
 	eval {
 		my $item = sql_select_hash ($table_name);
 
@@ -408,19 +401,19 @@ sub sql_do_delete {
 			$_OLD_REQUEST {'_' . $key} = $item -> {$key};
 		}
 	};
-	
+
 	sql_do ("DELETE FROM $table_name WHERE id = ?", $_REQUEST{id});
-	
+
 	delete $_REQUEST{id};
-	
+
 }
 
 ################################################################################
 
 sub sql_delete_file {
 
-	my ($options) = @_;	
-	
+	my ($options) = @_;
+
 	if ($options -> {path_column}) {
 		$options -> {file_path_columns} = [$options -> {path_column}];
 	}
@@ -431,7 +424,7 @@ sub sql_delete_file {
 		my $path = sql_select_array ("SELECT $column FROM $$options{table} WHERE id = ?", $options -> {id});
 		delete_file ($path);
 	}
-	
+
 
 }
 
@@ -440,64 +433,64 @@ sub sql_delete_file {
 sub sql_download_file {
 
 	my ($options) = @_;
-	
+
 	$_REQUEST {id} ||= $_PAGE -> {id};
-	
+
 	my $r = sql_select_hash ("SELECT * FROM $$options{table} WHERE id = ?", $_REQUEST {id});
 	$options -> {path} = $r -> {$options -> {path_column}};
 	$options -> {type} = $r -> {$options -> {type_column}};
 	$options -> {file_name} = $r -> {$options -> {file_name_column}};
-	
+
 	download_file ($options);
-	
+
 }
 
 ################################################################################
 
 sub sql_upload_file {
-	
+
 	my ($options) = @_;
 
 	my $uploaded = upload_file ($options) or return;
-		
+
 	sql_delete_file ($options);
-	
+
 	my (@fields, @params) = ();
-	
-	foreach my $field (qw(file_name size type path)) {	
+
+	foreach my $field (qw(file_name size type path)) {
 		my $column_name = $options -> {$field . '_column'} or next;
 		push @fields, "$column_name = ?";
 		push @params, $uploaded -> {$field};
 	}
-	
+
 	foreach my $field (keys (%{$options -> {add_columns}})) {
 		push @fields, "$field = ?";
 		push @params, $options -> {add_columns} -> {$field};
 	}
-	
+
 	@fields or return;
-	
+
 	my $tail = join ', ', @fields;
-		
+
 	sql_do ("UPDATE $$options{table} SET $tail WHERE id = ?", @params, $_REQUEST {id});
-	
+
 	return $uploaded;
-	
+
 }
 
 ################################################################################
-	
+
 sub sql_select_loop {
 
 	my ($sql, $coderef, @params) = @_;
-	
+
 #	my $st = sql_prepare ($sql);
 #	$st -> execute (@params);
 
 	my $items = sql_select_all ($sql, @params);
-	
+
 	our $i;
-	
+
 #	while ($i = $st -> fetchrow_hashref) {
 #		&$coderef ();
 #	}
@@ -505,7 +498,7 @@ sub sql_select_loop {
 	foreach $i (@$items) {
 		&$coderef ();
 	}
-	
+
 #	$st -> finish ();
 
 }

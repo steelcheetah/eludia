@@ -407,12 +407,6 @@ sub _draw_input_datetime {
 
 	my $attributes = dump_attributes ($options -> {attributes});
 
-	if ($data -> {input_attrs}) {
-		my $is_disabled = delete $data -> {input_attrs} {disabled};
-		$attributes .= ' disabled ' if ($is_disabled);
-		$attributes .= dump_attributes ($data -> {input_attrs});
-	}
-
 	my $shows_time = $options -> {no_time} ? 'false' : 'true';
 
 	my $html = <<EOH;
@@ -2519,10 +2513,6 @@ sub draw_centered_toolbar_button {
 	my $btn_r = 'btn_r';
 	my $btn_r_width = 6;
 
-	my $js_restore_cursor = "document.body.style.cursor = 'wait'; this.style.cursor = 'wait';";
-
-	$options -> {onclick} .= "$js_restore_cursor void(0);";
-
 	if (@{$options -> {items}} > 0) {
 
 		$btn_r = 'btn_r_multi';
@@ -2547,8 +2537,8 @@ EOH
 	$html .= <<EOH;
 				<tr>
 					<td width=6><img src="$_REQUEST{__static_url}/btn_l.gif?$_REQUEST{__static_salt}" width="6" height="25" border="0"></td>
-					<td width=30 background="$_REQUEST{__static_url}/btn_bg.gif?$_REQUEST{__static_salt}" valign="middle" align="center" nowrap><a class="button" onclick="$$options{onclick}" href="$$options{href}" id="$$options{id}" target="$$options{target}"><img src="$img_path" alt="$$options{label}" border=0 hspace=0 vspace=1 align=absmiddle>${nbsp}</a></td>
-					<td background="$_REQUEST{__static_url}/btn_bg.gif?$_REQUEST{__static_salt}" valign="absmiddle" align="center" nowrap><a class="button" onclick="$$options{onclick}" href="$$options{href}" id="$$options{id}" target="$$options{target}" $title>$$options{label}</a>${nbsp}${nbsp}</td>
+					<td width=30 background="$_REQUEST{__static_url}/btn_bg.gif?$_REQUEST{__static_salt}" valign="middle" align="center" nowrap><a class="button" $$options{onclick} href="$$options{href}" id="$$options{id}" target="$$options{target}"><img src="$img_path" alt="$$options{label}" border=0 hspace=0 vspace=1 align=absmiddle>${nbsp}</a></td>
+					<td background="$_REQUEST{__static_url}/btn_bg.gif?$_REQUEST{__static_salt}" valign="absmiddle" align="center" nowrap><a class="button" $$options{onclick} href="$$options{href}" id="$$options{id}" target="$$options{target}" $title>$$options{label}</a>${nbsp}${nbsp}</td>
 					<td width=$btn_r_width><img src="$_REQUEST{__static_url}/${btn_r}.gif?$_REQUEST{__static_salt}" width="$btn_r_width" height="25" border="0"></td>
 				</tr>
 			</table>
@@ -2837,7 +2827,7 @@ sub draw_text_cell {
 
 	if (defined $data -> {level}) {
 
-		$data -> {attributes} -> {style} = 'padding-left:' . ($data -> {level} * 15 + 3);
+		$data -> {attributes} -> {style} = 'padding-left:' . ($data -> {level} * 15 + 3) .  'px;';
 
 	}
 
@@ -2958,15 +2948,8 @@ sub draw_radio_cell {
 
 	my $attributes = dump_attributes ($data -> {attributes});
 
-	my $attr_input;
-	if ($data -> {input_attrs}) {
-		my $is_disabled = delete $data -> {input_attrs} {disabled};
-		$attr_input .= ' disabled ' if ($is_disabled);
-		$attr_input .= dump_attributes ($data -> {input_attrs});
-	}
-
 	my $html = ($options -> {editor} ? '<div' : '<td')
-		. qq { $$options{data} $attributes><input class=cbx type=radio name=$$data{name} $$data{checked} $attr_input value='$$data{value}'>$label_tail}
+		. qq { $$options{data} $attributes><input class=cbx type=radio name=$$data{name} $$data{checked} value='$$data{value}'>$label_tail}
 		. ($options -> {editor} ? '</div>' : '</td>');
 
 	return $html;
@@ -3018,15 +3001,8 @@ sub draw_checkbox_cell {
 
 	my $label = $data -> {label} ? '&nbsp;' . $data -> {label} : '';
 
-	my $attr_input;
-	if ($data -> {input_attrs}) {
-		my $is_disabled = delete $data -> {input_attrs} {disabled};
-		$attr_input .= ' disabled ' if ($is_disabled);
-		$attr_input .= dump_attributes ($data -> {input_attrs});
-	}
-
 	my $html = ($options -> {editor} ? '<div' : '<td')
-		. qq{$$options{data} $attributes><input class=cbx type=checkbox name=$$data{name} $$data{checked} $attr_input value='$$data{value}'>$label$label_tail}
+		. qq{$$options{data} $attributes><input class=cbx type=checkbox name=$$data{name} $$data{checked} value='$$data{value}'>$label$label_tail}
 		. ($options -> {editor} ? '</div>' : '</td>');
 
 	return $html;
@@ -3111,21 +3087,12 @@ EOJS
 
 	}
 
-	my $attr_input;
-	my $attrs = $data -> {select_attrs} || $data -> {input_attrs};
-	if ($attrs) {
-		my $is_disabled = delete $attrs -> {disabled};
-		$attr_input .= ' disabled ' if ($is_disabled);
-		$attr_input .= dump_attributes ($data -> {input_attrs});
-	}
-
 	my $html = ($options -> {editor} ? '<div ' : '<td ')
 		. qq {$attributes><select
 			$s_attributes
 			name="$$data{name}"
 			onChange="is_dirty=true; $$data{onChange}"
 			onkeypress='typeAhead();'
-			$attr_input
 			$multiple
 		};
 
@@ -3190,7 +3157,6 @@ sub draw_string_voc_cell {
 			if (result.result == 'ok') {
 				document.getElementById('$$data{name}_label').value = result.label;
 				document.getElementById('$$data{name}_id').value = result.id;
-$data->{onChange}
 			}
 EOJS
 	}
@@ -3301,12 +3267,6 @@ EOH
 
 	my $attributes = dump_attributes ($data -> {attributes});
 	$attr_input = dump_attributes ($attr_input);
-
-	if ($data -> {input_attrs}) {
-		my $is_disabled = delete $data -> {input_attrs} {disabled};
-		$attr_input .= ' disabled ' if ($is_disabled);
-		$attr_input .= dump_attributes ($data -> {input_attrs});
-	}
 
 	$data -> {label} =~ s{\"}{\&quot;}gsm;
 

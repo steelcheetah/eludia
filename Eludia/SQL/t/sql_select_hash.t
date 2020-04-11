@@ -1,4 +1,4 @@
-use Test::More tests => 3;
+use Test::More tests => 2;
 
 
 my $table = 'testtesttesttable1';
@@ -53,12 +53,5 @@ $result = sql_select_hash ("SELECT name FROM $table WHERE name = ?", 'ten');
 $result = sql_select_hash ("SELECT name FROM $table WHERE name = ?", undef);
 
 is ($result -> {name}, undef, "SELECT ?, params = (undef)");
-
-
-$result = sql_select_hash ("SELECT name FROM $table WHERE name = ?", 'ten');
-
-$result = sql_select_hash ("SELECT name FROM $table WHERE name = ?", ());
-
-is ($result -> {name}, undef, "SELECT ?, params = ()");
 
 END  { cleanup (); }

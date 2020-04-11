@@ -4,6 +4,8 @@ no warnings;
 
 sub handler {
 
+	my ($socket) = @_;
+
 	our @_PROFILING_STACK = ();
 
 	__profile_in ('handler.request');
@@ -15,6 +17,8 @@ sub handler {
 		my $page_is_not_needed = eval { page_is_not_needed (@_) };
 
 		return _ok () if $page_is_not_needed;
+
+		$_REQUEST {__socket} = $socket;
 
 		$code = $@ ? 500 : eval {
 
@@ -54,7 +58,7 @@ sub handler {
 
 	};
 
-	__profile_out ('handler.request' => {label => "type='$_REQUEST_VERBATIM{type}' id='$_REQUEST_VERBATIM{id}' action='$_REQUEST_VERBATIM{action}' id_user='$_USER->{id}'"}); warn "\n";
+	__profile_out ('handler.request' => {label => "type='$_REQUEST_VERBATIM{type}' id='$_REQUEST_VERBATIM{id}' action='$_REQUEST_VERBATIM{action}' id_user='$_USER->{id}'"});
 
 	if ($_REQUEST {__suicide}) {
 		$r -> print (' ' x 8192) if $_REQUEST {__lrt_log};
@@ -126,7 +130,9 @@ sub page_is_not_needed {
 
 sub setup_user {
 
-	if ($r -> uri =~ m{/(\w+)\.(css|gif|ico|js|html)$}) {
+	return 1 if $ENV {NO_SETUP_REQUEST};
+
+	if ($r && $r -> uri =~ m{/(\w+)\.(css|gif|ico|js|html)$}) {
 
 		my $fn = "$1.$2";
 
@@ -193,10 +199,14 @@ sub setup_request_params {
 
 	$ENV {HTTP_HOST} = $http_host if $http_host;
 
-	get_request (@_);
+	if (!$ENV {NO_SETUP_REQUEST}) {
 
-	if ($i18n -> {_charset} eq 'UTF-8') {
-		utf8::decode ($_) foreach (values %_REQUEST);
+		get_request (@_);
+		if ($i18n -> {_charset} eq 'UTF-8') {
+			utf8::decode ($_) foreach (values %_REQUEST);
+		} else {
+			foreach (values %_REQUEST) { decode_entities ($_) if $_ =~ /&#\d+;/; }
+		}
 	}
 
 	our %_REQUEST_VERBATIM = %_REQUEST;
@@ -216,7 +226,7 @@ sub setup_request_params {
 		$_REQUEST {sid} ||= $2;
 	}
 
-	set_cookie_for_root (
+	$ENV {NO_SETUP_REQUEST} or set_cookie_for_root (
 		client_cookie => $_COOKIE {client_cookie} || Digest::MD5::md5_hex (rand ())
 		, $preconf -> {core_auth_join_session}? 'session' : ''
 	);
@@ -260,7 +270,7 @@ sub setup_request_params {
 	our $_SO_VARIABLES = {};
 
 	$_REQUEST {type} =~ s/_for_.*//;
-	$_REQUEST {__uri} = $r -> uri;
+	$_REQUEST {__uri} = $r? $r -> uri : undef;
 	$_REQUEST {__uri} =~ s{/cgi-bin/.*}{/};
 	$_REQUEST {__uri} =~ s{/\w+\.\w+$}{};
 	$_REQUEST {__uri} =~ s{\?.*}{};
@@ -270,7 +280,7 @@ sub setup_request_params {
 
 	$_REQUEST {__script_name} = $ENV {SERVER_SOFTWARE} =~ /IIS\/5/ ? $ENV {SCRIPT_NAME} : '';
 
-	$_REQUEST {__windows_ce} = $r -> headers_in -> {'User-Agent'} =~ /Windows CE/ ? 1 : undef;
+	$_REQUEST {__windows_ce} = $r && $r -> headers_in -> {'User-Agent'} =~ /Windows CE/ ? 1 : undef;
 
 	if ($_REQUEST {fake}) {
 		$_REQUEST {fake} =~ s/\%(25)*2c/,/ig;
@@ -293,7 +303,7 @@ sub setup_request_params {
 
 	setup_request_params_for_toolbar_inputs () if $_REQUEST {__toolbar_inputs};
 
-	__profile_out ('handler.setup_request_params', {label => "type='$_REQUEST_VERBATIM{type}' id='$_REQUEST_VERBATIM{id}' action='$_REQUEST_VERBATIM{action}' id_user='$_USER->{id}'"});
+	__profile_out ('handler.setup_request_params', {label => "type='$_REQUEST_VERBATIM{type}' id='$_REQUEST_VERBATIM{id}' action='$_REQUEST_VERBATIM{action}'"});
 
 }
 
@@ -431,7 +441,7 @@ sub setup_page {
 	if ($ENV {FCGI_ROLE}) {
 		my $process = $0;
 		$process =~ s#(.*/)?([\w\.]+).*#$2#;
-		$process .= " $ENV{SERVER_NAME}: type=$_REQUEST{type}, id=$_REQUEST{id}, action=$_REQUEST{action}, id_user=$_USER->{id}";
+		$process .= " $ENV{SERVER_NAME}: type=$_REQUEST{type}, id=$_REQUEST{id}, action=$_REQUEST{action}, id_user=$$_USER{id}";
 		$0 = $process;
 	}
 
@@ -447,7 +457,7 @@ sub setup_page {
 
 		$_REQUEST {action}    ? 'action'  :
 
-		$r -> headers_in -> {'X-Requested-With'} eq 'XMLHttpRequest' && !$_REQUEST {__only_table} ? 'data' :
+		$r && $r -> headers_in -> {'X-Requested-With'} eq 'XMLHttpRequest' && !$_REQUEST {__only_table} ? 'data' :
 
 					'showing' ;
 
@@ -528,13 +538,22 @@ sub handle_error {
 
 	my $error = investigate_error ($_REQUEST {error}, delete $_REQUEST {sql_query}, delete $_REQUEST {sql_params});
 
+	if ($ENV {NO_SETUP_REQUEST}) {
+
+		$_REQUEST {error_full} = $error->{'error'};
+		return action_finish ();
+
+	}
+
 	out_html ({}, draw_error_page ($page, $error));
 
 	if ($error -> {kind}) {
 
 		notify_about_error ($error);
 
-		try_to_repair_error ($error);
+		if ($preconf -> {core_try_repair_error}) {
+			try_to_repair_error ($error);
+		}
 	}
 
 	return action_finish ();
@@ -560,7 +579,7 @@ sub handle_request_of_type_kickout {
 
 	foreach (qw(sid salt _salt __last_query_string __last_scrollable_table_row)) {delete $_REQUEST {$_}}
 
-	unless ($r -> headers_in -> {'X-Requested-With'} eq 'XMLHttpRequest') {
+	if ($r && $r -> headers_in -> {'X-Requested-With'} ne 'XMLHttpRequest') {
 		setup_json ();
 		my %_R = map {$_ => $_REQUEST {$_}} grep {!ref $_REQUEST {$_}} keys %_REQUEST;
 		set_cookie (
@@ -606,10 +625,13 @@ sub handle_request_of_type_action {
 
 	eval { $db -> {AutoCommit} = 0; };
 
+	sql_do ("SELECT set_config ('_request._id_log', ?, true), set_config ('_user.id', ?, true)", $_REQUEST {_id_log}, $_USER -> {id})
+		if $SQL_VERSION -> {driver} eq 'PostgreSQL';
+
 	my $page_type = $page -> {type};
 
 	if ($_REQUEST {__edited_cells_table}) {
-		require_content ( $_REQUEST {action_type} )	if $_REQUEST {action_type};
+		require_content ( $_REQUEST {action_type} ) if $_REQUEST {action_type};
 
 		$page_type = $_REQUEST {action_type} || $page -> {type};
 	}
@@ -630,7 +652,9 @@ sub handle_request_of_type_action {
 
 	};
 
-	$_REQUEST {error} = $@ if $@;
+	$_REQUEST {error} = $@ if $@ && $@ !~ /^__lrt_start__ /;
+
+	my $no_log_action_finish = 1 if $@ =~ /^__lrt_start__ /;
 
 	return handle_error ($page) if $_REQUEST {error};
 
@@ -645,7 +669,6 @@ sub handle_request_of_type_action {
 
 		setup_skin ();
 
-
 		eval { $_REQUEST {__page_content} = $page -> {content} = call_for_role (($_REQUEST {id} ? 'get_item_of_' : 'select_') . $page -> {type})};
 
 		$_REQUEST {error} = $@ if $@;
@@ -658,7 +681,7 @@ sub handle_request_of_type_action {
 
 		out_json ({html => $result});
 
-		return action_finish ();
+		return action_finish ($no_log_action_finish);
 	}
 
 	unless ($_REQUEST {__response_sent}) {
@@ -673,11 +696,11 @@ sub handle_request_of_type_action {
 
 		check_dbl_click_finish ($redirect_url);
 
-		redirect ($redirect_url, {kind => 'js', label => $_REQUEST {__redirect_alert}});
+		redirect ($redirect_url, {kind => 'js', label => $_REQUEST {__redirect_alert}, message_type => $_REQUEST {__message_type}});
 
 	}
 
-	return action_finish ();
+	return action_finish ($no_log_action_finish);
 
 }
 
@@ -714,6 +737,36 @@ sub handle_request_of_type_suggest {
 
 ################################################################################
 
+sub _check_exec_time {
+
+	my $time_stat = {
+		exec_time_start => $_[0],
+		exec_time_end   => time,
+	};
+
+	my $max_duration = $preconf -> {objects_profiling} -> {($_REQUEST_VERBATIM {id} ? 'get_item_of_' : 'select_')} -> {$_REQUEST_VERBATIM {type}} || $preconf -> {objects_profiling} -> {($_REQUEST_VERBATIM {id} ? 'get_item_of_' : 'select_')} -> {default};
+
+	my $duration = int (($time_stat -> {exec_time_end} - $time_stat -> {exec_time_start}) * 1000);
+
+	if ($max_duration && $duration > $max_duration) {
+
+		my $params = Dumper ({map {$_ => $_REQUEST_VERBATIM {$_}} grep {$_ !~ /^__/ && !($_ ~~ [qw(salt sid id type)])} keys %_REQUEST_VERBATIM});
+
+		sql_do_insert ('objects_profiling', {
+			fake      => 0,
+			type      => $_REQUEST_VERBATIM {type},
+			id_object => $_REQUEST_VERBATIM {id},
+			id_user   => $_USER -> {id},
+			params    => $params,
+			duration  => $duration,
+		});
+
+	}
+
+}
+
+################################################################################
+
 sub setup_page_content {
 
 	my ($page) = @_;
@@ -738,8 +791,12 @@ sub handle_request_of_type_showing {
 
 	$page -> {no_adjust_last_query_string} or adjust_last_query_string ();
 
+	my $exec_time_start = time;
 	setup_page_content ($page)
 		unless ($_REQUEST {__only_menu} || !$_REQUEST_VERBATIM {type} && !$_REQUEST_VERBATIM {__subset});
+	eval {_check_exec_time ($exec_time_start)};
+
+	delete $_REQUEST {error} if $_REQUEST {error} =~ /^__lrt_start__ /;
 
 	return handle_error ($page) if $_REQUEST {error};
 
@@ -839,11 +896,13 @@ sub handler_finish {
 
 sub action_finish {
 
+	my ($no_log_action_finish) = @_;
+
 	unless ($db -> {AutoCommit}) {
 
 		eval {
 
-			if ($_REQUEST {error}) {
+			if ($_REQUEST {error} || $ENV {NO_SETUP_REQUEST}) {
 				$db -> rollback
 			}
 			else {
@@ -856,7 +915,7 @@ sub action_finish {
 
 	}
 
-	log_action_finish ();
+	log_action_finish () unless $no_log_action_finish;
 
 	if ($_REQUEST {error} && $preconf -> {core_dbl_click_protection} && $_REQUEST {_id_log}) {
 		sql_do ("DELETE FROM $conf->{systables}->{__action_log} WHERE id_log = ?", $_REQUEST {_id_log});

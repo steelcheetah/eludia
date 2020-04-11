@@ -29,6 +29,7 @@ sub _fix_menu {
 			label     => $i -> {label},
 			href      => $i -> {href},
 			side      => $i -> {side},
+			classes   => $i -> {classes},
 			(!$i -> {items} ? () : (items => $i -> {items})),
 		};
 

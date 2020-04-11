@@ -929,6 +929,8 @@ EOS
 		
 	}
 	
+	my $table = $DB_MODEL -> {tables} -> {$table_name};
+
 	foreach my $field (keys %$pairs) { 
 	
 		my $comma = @params ? ', ' : '';	
@@ -936,12 +938,24 @@ EOS
 		$fields .= "$comma $field";
 		$args   .= "$comma ?";
 
-		if (exists($DB_MODEL->{tables}->{$table_name}->{columns}->{$field}->{COLUMN_DEF}) && !($pairs -> {$field})) {
-			push @params, $DB_MODEL->{tables}->{$table_name}->{columns}->{$field}->{COLUMN_DEF};
+		my $value = $pairs -> {$field};
+
+		if (exists $table -> {columns} -> {$field} -> {NULLABLE}
+			&& $table -> {columns} -> {$field} -> {NULLABLE} == 0
+			&& exists $table -> {columns} -> {$field} -> {COLUMN_DEF}
+			&& !defined $value
+		) {
+
+			$value = $table -> {columns} -> {$field} -> {COLUMN_DEF};
+
 		}
-		else {
-			push @params, $pairs -> {$field};	
-		}
+ 		
+		$value    = $value eq '' ? undef : $value + 0
+			if $table -> {columns} -> {$field} -> {TYPE_NAME} =~ /.*(int|decimal).*/;
+		$value    = $value eq '' || $value lt '0001-01-01' ? undef : $value
+			if $table -> {columns} -> {$field} -> {TYPE_NAME} =~ /.*date.*/;
+
+		push @params, $value;
  		
 	}
 
@@ -1320,6 +1334,20 @@ for(my $i = $#items; $i >= 1; $i--) {
 	else {
 		$items[$i] =~ s/\bHEX(\(.*?\))/RAWTOHEX\1/igsm;	
 	}
+
+
+	while ($items[$i] =~ m/\b(FIELD\((.+?),\s*(.+?)\))/ism) {
+		my ($match, $field, $ids) = ($1, $2, $3);
+		my @vals = split /\s*,\s*/, $ids;
+		my @decode;
+		for (my $ord = 0; $ord < @vals; $ord++) {
+			push @decode, $vals [$ord], $ord;
+		}
+		my $decode = join ',', @decode;
+		$match = quotemeta ($match);
+		$items[$i] =~ s/$match/DECODE\($field, $decode\)/ism;
+	}
+
 	####### DATE_FORMAT
 	if ($items[$i] =~ m/\bDATE_FORMAT\((.+?),(.+?)\)/igsm) {
 		my $expression = $1;
@@ -1335,13 +1363,13 @@ for(my $i = $#items; $i >= 1; $i--) {
 		$items[$i] = "TO_CHAR ($expression,$format)";
 	}
 	######## SUBDATE() è DATE_SUB()
-	if ($items[$i] =~ m/(\bSUBDATE|\bDATE_SUB)\((.+?),\s*\w*?\s*(\d+)\s*(\w+)\)/igsm) {
+	if ($items[$i] =~ m/(\bSUBDATE|\bDATE_SUB)\((.+?),\s*\w*?\s*(\d+|\?)\s*(\w+)\)/igsm) {
 		my $temp = $4;
 		if ($temp =~ m/DAY|HOUR|MINUTE|SECOND/igsm) {
-			$items[$i] =~ s/(\bSUBDATE|\bDATE_SUB)\((.+?),\s*\w*?\s*(\d+)\s*(\w+)\)/TO_DATE(\2)-NUMTODSINTERVAL\(\3,'$4')/igsm; 	
+			$items[$i] =~ s/(\bSUBDATE|\bDATE_SUB)\((.+?),\s*\w*?\s*(\d+|\?)\s*(\w+)\)/TO_DATE(\2)-NUMTODSINTERVAL\(\3,'$4')/igsm;
 		}
 		if ($temp =~ m/YEAR|MONTH/igsm)  {
-			$items[$i] =~ s/(\bSUBDATE|\bDATE_SUB)\((.+?),\s*\w*?\s*(\d+)\s*(\w+)\)/TO_DATE(\2)-NUMTOYMINTERVAL\(\3,'$4')/igsm; 		
+			$items[$i] =~ s/(\bSUBDATE|\bDATE_SUB)\((.+?),\s*\w*?\s*(\d+|\?)\s*(\w+)\)/TO_DATE(\2)-NUMTOYMINTERVAL\(\3,'$4')/igsm;
 		}
 	}
 	######## ADDDATE() è DATE_ADD()

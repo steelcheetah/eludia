@@ -187,9 +187,7 @@ sub sql_assert_core_tables {
 
 	$db or return;
 
-	$model_update or die "\$db && !\$model_update ?!! Can't believe it.\n";
-
-	return if $model_update -> {core_ok};
+	return if ($model_update -> {core_ok} ||= $preconf -> {no_model_update});
 
 	__profile_in ('sql.assert_core_tables');
 
@@ -340,9 +338,11 @@ sub sql_reconnect {
 
 	__profile_in ('core.sql.reconnect');
 
+	my ($force) = @_;
+
 	our $db, $model_update, $SQL_VERSION;
 
-	if ($db && ($preconf -> {no_model_update} || ($model_update && $model_update -> {core_ok}))) {
+	if ($db && ($preconf -> {no_model_update} || ($model_update && $model_update -> {core_ok})) && !$force) {
 
 		if (sql_ping ()) {
 
@@ -364,6 +364,7 @@ sub sql_reconnect {
 		LongTruncOk => 1,
 		InactiveDestroy => 0,
 		mysql_enable_utf8 => $i18n -> {_charset} eq 'UTF-8',
+		pg_enable_utf8 => $i18n -> {_charset} eq 'UTF-8'? -1 : 0,
 	});
 #warn "Connect: '" . $dbh -> {odbc_has_unicode} . "'\n\n\n";
 	if ($preconf -> {db_cache_statements}) {
@@ -408,23 +409,31 @@ sub sql_reconnect {
 
 	sql_version ();
 
-	unless ($preconf -> {no_model_update}) {
+	if (my $f = $conf -> {sql_features}) {
 
-		if ($model_update) {
+		foreach (@$f) {
 
-			$model_update -> {db} = $db;
+			next if $SQL_VERSION -> {features} -> {$_};
 
-		}
-		else {
+			warn ("This application cannot run on $SQL_VERSION->{string}, the missing feature is $_\n");
 
-			$model_update = $_NEW_PACKAGE -> new (
-				$db,
-				before_assert		=> $conf -> {'db_temporality'} ? \&sql_temporality_callback : undef,
-				schema			=> $preconf -> {db_schema},
-			);
+			CORE::exit (1);
 
 		}
 
+	}
+
+	if ($model_update) {
+
+		$model_update -> {db} = $db;
+
+	} else {
+
+		$model_update = $_NEW_PACKAGE -> new (
+			$db,
+			before_assert   => $conf -> {'db_temporality'} ? \&sql_temporality_callback : undef,
+			schema          => $preconf -> {db_schema},
+		);
 	}
 
 	__profile_out ('core.sql.reconnect', {label => $SQL_VERSION -> {string}});
@@ -609,6 +618,57 @@ sub sql_select_vocabulary {
 
 ################################################################################
 
+sub sql_do_update {
+
+	my ($table_name, $field_list, $options) = @_;
+
+	ref $options eq HASH or $options = {
+		stay_fake => $options,
+		id        => $_REQUEST {id},
+	};
+
+	$options -> {id} ||= $_REQUEST {id};
+
+	my $item = sql_select_hash ($table_name, $options -> {id});
+
+	my $have_fake_param;
+	my $sql = join ', ', map {$have_fake_param ||= ($_ eq 'fake'); "$_ = ?"} @$field_list;
+	$options -> {stay_fake} or $have_fake_param or $sql .= ', fake = 0';
+
+	my $table = $DB_MODEL -> {tables} -> {$table_name};
+
+	foreach my $f (@$field_list) {
+
+		if (exists $table -> {columns} -> {$f} -> {NULLABLE}
+			&& $table -> {columns} -> {$f} -> {NULLABLE} == 0
+			&& exists $table -> {columns} -> {$f} -> {COLUMN_DEF}
+			&& !defined $_REQUEST {"_$f"}
+		) {
+			$_REQUEST {"_$f"} = $table -> {columns} -> {$f} -> {COLUMN_DEF};
+		}
+
+		$_REQUEST {"_$f"} = $_REQUEST {"_$f"} eq '' ? undef : $_REQUEST {"_$f"} + 0
+			if $table -> {columns} -> {$f} -> {TYPE_NAME} =~ /.*(int|decimal).*/;
+
+		$_REQUEST {"_$f"} = $_REQUEST {"_$f"} eq '' || $_REQUEST {"_$f"} lt '0001-01-01' ? undef : $_REQUEST {"_$f"}
+			if $table -> {columns} -> {$f} -> {TYPE_NAME} =~ /.*date.*/;
+
+	}
+
+	$sql = "UPDATE $table_name SET $sql WHERE id = ?";
+
+	my @params = @_REQUEST {(map {"_$_"} @$field_list)};
+	push @params, $options -> {id};
+
+	sql_do ($sql, @params);
+
+	if ($item -> {fake} == -1 && $conf -> {core_undelete_to_edit} && !$options -> {stay_fake}) {
+		do_undelete_DEFAULT ($table_name, $options -> {id});
+	}
+}
+
+################################################################################
+
 sub sql_select_id {
 
 	my ($table, $values, @lookup_field_sets) = @_;
@@ -642,10 +702,10 @@ sub sql_select_id {
 		defined $table_model -> {columns} -> {$key} or die "sql_select_id: Unknown column '$table_safe.$key'";
 
 		$values -> {$key} = $values -> {$key} eq '' ? undef : $values -> {$key} + 0
-			if ($table_model -> {columns} -> {$key} -> {TYPE_NAME} =~ /.*int.*/);
+			if $table_model -> {columns} -> {$key} -> {TYPE_NAME} =~ /.*(int|decimal).*/;
 
-		$values -> {$key} = $values -> {$key} eq '' ? undef : $values -> {$key}
-			if ($table_model -> {columns} -> {$key} -> {TYPE_NAME} =~ /.*(date|decimal).*/);
+		$values -> {$key} = $values -> {$key} eq '' || $values -> {$key} lt '0001-01-01' ? undef : $values -> {$key}
+			if $table_model -> {columns} -> {$key} -> {TYPE_NAME} =~ /.*date.*/;
 
 	}
 
@@ -675,7 +735,13 @@ sub sql_select_id {
 
 		foreach my $lookup_field (@$lookup_fields) {
 
-			my $value = $values -> {$lookup_field};
+			my $value;
+
+			if (ref $lookup_field eq HASH) {
+				($lookup_field, $value) = each %$lookup_field;
+			} else {
+				$value = $values -> {$lookup_field};
+			}
 
 			if ($value eq '' && $SQL_VERSION -> {driver} eq 'Oracle') {
 
@@ -822,11 +888,15 @@ warn "relink $table_name: $old_id -> $new_id";
 		foreach my $column_def (@{$DB_MODEL -> {aliases} -> {$table_name} -> {references}}) {
 
 			next
-				if $DB_MODEL -> {tables} -> {$column_def -> {table_name}} -> {sql};
+				if $DB_MODEL -> {tables} -> {$column_def -> {table_name}} -> {sql}
+					|| $column_def -> {table_name} eq $conf -> {systables} -> {log};
 
 warn "relink $$column_def{table_name} ($$column_def{name}): $old_id -> $new_id";
 
 			if ($column_def -> {TYPE_NAME} =~ /int/) {
+
+				next
+					if !sql_select_hash ("SELECT * FROM $$column_def{table_name} WHERE $$column_def{name} = ?", $old_id);
 
 				_hide_full_clones ($relink_cols, $column_def, $old_id, $new_id);
 
@@ -837,7 +907,7 @@ warn "relink $$column_def{table_name} ($$column_def{name}): $old_id -> $new_id";
 						'$$column_def{table_name}' AS table_name,
 						'$$column_def{name}' AS column_name,
 						id AS id_from,
-						'$old_id' AS id_to
+						$$column_def{name} AS id_to
 					FROM
 						$$column_def{table_name}
 					WHERE
@@ -870,7 +940,7 @@ EOS
 
 			}
 
-		}
+		} # foreach references
 
 		if ($column_name) {
 			sql_do ("UPDATE $table_name SET fake = -1, $column_name = ? WHERE id = ?", $new_id, $old_id);
@@ -910,7 +980,8 @@ warn "undo relink $table_name: $old_id";
 		foreach my $column_def (@{$DB_MODEL -> {aliases} -> {$table_name} -> {references}}) {
 
 			next
-				if $DB_MODEL -> {tables} -> {$column_def -> {table_name}} -> {sql};
+				if $DB_MODEL -> {tables} -> {$column_def -> {table_name}} -> {sql}
+					|| $column_def -> {table_name} eq $conf -> {systables} -> {log};
 
 			my $from = <<EOS;
 				FROM
@@ -927,7 +998,12 @@ warn "undo relink $$column_def{table_name} ($$column_def{name}): $old_id";
 
 			if ($column_def -> {TYPE_NAME} =~ /int/) {
 				sql_do ("UPDATE $$column_def{table_name} SET $$column_def{name} = ? WHERE id IN ($ids)", $old_id);
-				sql_do ("UPDATE $$column_def{table_name} SET $$column_def{name} = -$$column_def{name} WHERE $$column_def{name} = ?", -$old_id);
+				my $with_fake = 1;
+				foreach (qw (__action_log __checksums __last_update __lrt __moved_links sessions)) {
+					$with_fake = 0 if $column_def -> {table_name} eq $conf -> {systables} -> {$_};
+				}
+				my $set_fake = $with_fake ? ', fake = IF(fake = -2, 0, fake)' : '';
+				sql_do ("UPDATE $$column_def{table_name} SET $$column_def{name} = -$$column_def{name} $set_fake WHERE $$column_def{name} = ?", -$old_id);
 			}
 			else {
 				$old_id_ = $old_id . ',';
@@ -948,7 +1024,11 @@ sub _hide_full_clones {
 
 	my ($relink_cols, $column_def, $old_id, $new_id) = @_;
 
-	@{$relink_cols -> {$column_def -> {table_name}}} > 0 or return;
+	my @relink_cols = @{$relink_cols -> {$column_def -> {table_name} . '_' . $column_def -> {name}}};
+
+	@relink_cols > 0 or @relink_cols = @{$relink_cols -> {$column_def -> {table_name}}};
+
+	@relink_cols > 0 or return;
 
 	my $ids = _check_ids ("$old_id, $new_id");
 
@@ -956,7 +1036,7 @@ sub _hide_full_clones {
 
 	if (sql_version() -> {string} =~ /mysql/i) {
 
-		my $group = 'GROUP BY ' . join (", ", map {"$$column_def{table_name}." . $_} @{$relink_cols -> {$column_def -> {table_name}}});
+		my $group = 'GROUP BY ' . join (", ", map {"$$column_def{table_name}." . $_} @relink_cols);
 
 		$clones_ids = join (',', sql_select_col (<<EOS));
 			SELECT
@@ -974,7 +1054,7 @@ EOS
 	} else {
 
 		my $join = "LEFT JOIN $$column_def{table_name} AS clone_table_name ON $$column_def{table_name}.id <> clone_table_name.id AND "
-			. join (" AND ", map {"$$column_def{table_name}." . $_ . " = clone_table_name." . $_} @{$relink_cols -> {$column_def -> {table_name}}});
+			. join (" AND ", map {"$$column_def{table_name}." . $_ . " = clone_table_name." . $_} @relink_cols);
 
 		my $clones_ids;
 
@@ -1000,6 +1080,7 @@ EOS
 			$$column_def{table_name}
 		SET
 			$$column_def{name} = -$$column_def{name}
+			, fake = IF(fake = 0, -2, fake)
 		WHERE
 			id IN ($clones_ids)
 		AND $$column_def{name} = ?
@@ -1256,11 +1337,17 @@ sub sql_safe_execute {
 	my ($st, $params, $dbh) = @_;
 
 	if ($ENV {ELUDIA_SILENT}) {
+		__profile_in ('sql.sql_execute');
 		$st -> execute (@$params);
+		__profile_out ('sql.sql_execute');
 		return;
 	}
 
+	__profile_in ('sql.sql_execute');
+
 	eval {$st -> execute (@$params)};
+
+	__profile_out ('sql.sql_execute', {label => $st -> {Statement} . ' ' . (join ', ', map {$db -> quote ($_)} @$params)});
 
 	my $error = $@;
 
@@ -1272,6 +1359,12 @@ sub sql_safe_execute {
 
 	$_REQUEST {sql_params} = $params;
 
+darn [$_REQUEST {sql_query}, $_REQUEST {sql_params}];
+
+	if ($_REQUEST {__skin} eq 'STDERR' ){
+		$error = $_REQUEST {sql_query} . "\n" . $error;
+	}
+
 	die $error;
 }
 
@@ -1282,6 +1375,10 @@ sub sql_upload_files {
 	my ($options) = @_;
 
 	my ($table, $field) = split /\./, $_REQUEST {"__$options->{name}_file_field"};
+
+	$table && $field or return;
+	exists $DB_MODEL -> {tables} -> {$table} or return;
+	exists $DB_MODEL -> {tables} -> {$table} -> {columns} -> {$field} or return;
 
 	my $no_del = $_REQUEST {"__$options->{name}_file_no_del"};
 
@@ -1435,6 +1532,12 @@ sub assert {
 				, {table => $table -> {name}, table_def => $table}) if exists $table -> {partition};
 
 			wish (table_keys    => [map {{name => $_, parts => $table -> {keys} -> {$_}}} (keys %{$table -> {keys}})],    {table => $table -> {name}, table_def => $table}) if exists $table -> {keys};
+
+			if (exists $table -> {triggers}) {
+
+				wish (table_triggers => [map {{name => $_, body => $table -> {triggers} -> {$_}}} (keys %{$table -> {triggers}})], {table => $table -> {name}});
+
+			}
 
 			if (exists $table -> {data} && ref $table -> {data} eq ARRAY && @{$table -> {data}} > 0) {
 

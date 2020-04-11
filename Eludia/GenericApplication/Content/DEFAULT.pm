@@ -162,11 +162,17 @@ sub do_create_DEFAULT { # создание
 
 sub do_update_DEFAULT { # запись карточки
 
-	my $type = $_[0] || $_REQUEST {__edited_cells_table} || $_REQUEST {type};
+	my ($options, $id_type, $id_type_field) = @_;
+
+	ref $options eq 'HASH' or $options = {type => $options, id_type => $id_type, id_type_field => $id_type_field};
+
+	my $type = $options -> {type} || $_REQUEST {__edited_cells_table} || $_REQUEST {type};
 
 	my $columns = $model_update -> get_columns ($type);
 
 	my $id_edit = $_REQUEST {id_edit_cell} || $_REQUEST {id};
+
+	if ($columns -> {file_name} && $columns -> {file_type} && $columns -> {file_size} && $columns -> {file_path}) {
 
 	if ($_REQUEST {_file_clear_flag_for_file} && !$_REQUEST {_file}) {
 
@@ -176,21 +182,26 @@ sub do_update_DEFAULT { # запись карточки
 
 	}
 
-	my $options = {
+	my $up_options = {
 		name => 'file',
-		dir => 'upload/images',
+		dir => $options -> {upload_dir} || 'upload/images',
 		table => $type,
 		file_name_column => 'file_name',
 		size_column => 'file_size',
 		type_column => 'file_type',
 		path_column => 'file_path',
+		file_extensions => $options -> {file_extensions},
+		max_file_size   => $options -> {max_file_size},
+		file_max_name_length => $options -> {file_max_name_length},
 	};
 
-	$options -> {body_column} = 'file_body' if $columns -> {file_body};
+	$up_options -> {body_column} = 'file_body' if $columns -> {file_body};
 
-	sql_upload_file ($options);
+	sql_upload_file ($up_options);
 
 	sql_upload_files ({name => 'file'});
+
+	}
 
 	my @fields = ();
 
@@ -198,13 +209,16 @@ sub do_update_DEFAULT { # запись карточки
 		$key =~ /^_/ or next;
 		$columns -> {$'} or next;
 		push @fields, $';
+		if ($columns -> {$'} -> {TYPE_NAME} =~ /int/i || $columns -> {$'} -> {TYPE_NAME} =~ /date/i) {
+			$_REQUEST {$key} = $columns -> {$'} -> {COLUMN_DEF} unless defined $_REQUEST {$key};
+		}
 	}
 
 	if (@fields > 0) {
 
-		my $id = $_[2] || 'id';
+		my $id = $options -> {id_type_field} || 'id';
 
-		sql_do_update ($type, \@fields, {$id => $_[1] || $id_edit});
+		sql_do_update ($type, \@fields, {$id => $options -> {id_type} || $id_edit});
 
 	}
 

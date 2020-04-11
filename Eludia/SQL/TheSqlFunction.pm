@@ -76,7 +76,13 @@ sub _sql_list_fields {
 
 		if ($token =~ /^[a-z][a-z_\d]*$/) {
 
-			$buffer .= "$table_alias.$token";   next;
+			if (!$level || $buffer !~ m/\sAS\s+$/) { # CAST (field AS text)
+
+				$buffer .= "$table_alias.";
+
+			}
+
+			$buffer .= $token;            next;
 
 		}
 
@@ -145,6 +151,7 @@ sub _sql_filters {
 	my $limit;
 	my $delete;
 	my $update;
+	my $hierarchy       = 0;
 	my @where_params   = ();
 	my @having_params  = ();
 
@@ -189,6 +196,8 @@ sub _sql_filters {
 
 		my ($field, $values) = @$filter;
 
+		ref $values eq ARRAY and $values = [@$values];
+
 		if ($field eq 'DELETE') {
 			$delete = 1;
 			next;
@@ -207,6 +216,11 @@ sub _sql_filters {
 		if ($field eq 'LIMIT') {
 			$limit = $values;
 			ref $limit or $limit = [$limit];
+			next;
+		}
+
+		if ($field eq 'HIERARCHY') {
+			$hierarchy = 1;
 			next;
 		}
 
@@ -290,27 +304,27 @@ sub _sql_filters {
 
 				} else {
 
-					$$buffer .= "\n  AND ($field (-1";
+					my @ids = (-1, grep {$_ != -1} map {split /,/, $_} grep {/\d/} @$values);
 
-					foreach (grep {/\d/} @$values) { $where .= ", $_"}
+					$$buffer .= "\n  AND ($field (" . (join ', ', map {'?'} @ids) . "))";
+
+					push @$params, @ids;
 
 				}
-
-				$$buffer .= "))";
 
 			}
 
 		}
 		else {
 
-			if ($field =~ s{\<\+}{\<}) {					# 'dt <+ 2008-09-30' --> 'dt < 2008-10-01'
+			if ( $field =~ s{\<\+}{\<} ) {					# 'dt <+ 2008-09-30' --> 'dt < 2008-10-01'
 				my @ymd = split /\-/, $first_value;
 				$values -> [0] = dt_iso (Date::Calc::Add_Delta_Days (@ymd, 1));
 			}
 
 			unless ($has_placeholder || $is_null) {
 
-				$field  =~ /(=|\<|\>|LIKE)\s*$/ or $field .= ' = ';	# 'id_org'           --> 'id_org = '
+				$field  =~ /(=|\<|\>|ILIKE|LIKE)\s*$/ or $field .= ' = ';	# 'id_org'           --> 'id_org = '
 
 				$field .= ' ? '; 					# 'id_org LIKE '     --> 'id_org LIKE ?'
 
@@ -322,7 +336,7 @@ sub _sql_filters {
 
 			}
 
-			my @tokens = split /(LIKE\s+\%?\?\%)/, $field;
+			my @tokens = split /(ILIKE\s+\%?\?\%)||(LIKE\s+\%?\?\%)/, $field;
 
 			$$buffer .= "\n AND (";
 
@@ -392,6 +406,7 @@ sub _sql_filters {
 		cnt_filters    => $cnt_filters,
 		delete         => $delete,
 		update         => $update,
+		hierarchy      => $hierarchy,
 		order          => $order,
 		limit          => $limit,
 		where          => $where,
@@ -434,6 +449,8 @@ sub _sql_unwrap_record {
 sub en_unplural {
 
 	my ($s) = @_;
+
+	foreach (@{$conf -> {core_sql_unplural_exceptions}}) { $_ eq $s and return $s;}
 
 	if ($s =~ /status$/)                { return $s }
 	if ($s =~ /goods$/)                 { return $s }
@@ -592,7 +609,8 @@ sub sql {
 
 		}
 
-		$table =~ s{\s}{}gsm;
+		$table =~ s{(\(.*\))?|\s}{$1}gsm;
+#		$table =~ s{\s}{}gsm;
 
 		my $id_vs_null;
 
@@ -603,7 +621,8 @@ sub sql {
 
 		}
 
-		$table =~ /(\-?)(\w+)(?:\((.*?)\))?/ or die "Invalid table definition: '$table'\n";
+		$table =~ /(\-?)(\w+)(?:\((.*?)\))?$/ or die "Invalid table definition: '$table'\n";
+#		$table =~ /(\-?)(\w+)(?:\((.*?)\))?/ or die "Invalid table definition: '$table'\n";
 
 		my ($minus, $name, $columns) = ($1, $2, $3);
 
@@ -651,6 +670,17 @@ sub sql {
 		if ($table -> {on}) {
 
 			my $sql_filters = _sql_filters ($table -> {alias}, $table -> {filters});
+
+			$table -> {on} =~ /(.*)?\.id_$$table{alias}\s+\=\s+$$table{alias}\.id/;
+			$table -> {parent} = $1;
+
+			if ($table -> {parent} eq '*') {
+				$table -> {on} =~ /$$table{alias}\.id\s+\=\s+(.*)?\.id_$$table{alias}/;
+				$table -> {parent} = $1;
+			}
+
+			$table -> {parent} = en_unplural($table -> {parent});
+			delete($table -> {parent}) if $table -> {parent} ~~ ['*', $root_table];
 
 			$from .= "\n $table->{join} $table->{name}";
 			$from .= " $table->{alias}" if $table -> {name} ne $table -> {alias};
@@ -705,6 +735,7 @@ sub sql {
 
 				my $sql_filters = _sql_filters ($table -> {alias}, $table -> {filters});
 
+				$table -> {parent} = en_unplural($t->{alias}) if $t->{alias} ne $root_table;
 				$from .= "\n $table->{join} $table->{name}";
 				$from .= " $table->{alias}" if $table -> {name} ne $table -> {alias};
 				$from .= " ON ($table->{alias}.$referring_field_name = $t->{name}.id $sql_filters->{where})";
@@ -765,6 +796,7 @@ sub sql {
 				if ($table -> {filters}) {
 
 					my $sql_filters = _sql_filters ($table -> {alias}, $table -> {filters});
+					$table -> {parent} = en_unplural($t->{alias}) if $t->{alias} ne $root_table;
 					$from .= " ON ($t->{alias}.$referring_field_name = $table->{alias}.id $sql_filters->{where})";
 					push @join_params, @{$sql_filters -> {where_params}};
 
@@ -778,6 +810,7 @@ sub sql {
 				}
 				else {
 
+					$table -> {parent} = en_unplural($t->{alias}) if $t->{alias} ne $root_table;
 					$from .= " ON $t->{alias}.$referring_field_name = $table->{alias}.id";
 
 				}
@@ -818,7 +851,8 @@ sub sql {
 
 	foreach my $column (@columns) {
 
-		push @{$columns_by_grouping -> [$column -> {is_group} ||= 0]}, $column;
+		push @{$columns_by_grouping -> [$column -> {is_group} ||= 0]}, $column
+			if $column -> {src} !~ /^\s*('.*')\s*$/;
 
 	}
 
@@ -898,7 +932,7 @@ sub sql {
 
 		. (join "\n, ",
 
-			map {"$_->{src} $_->{alias}"} (
+			map {"$_->{src} AS $_->{alias}"} (
 				@{$columns_by_grouping -> [0]},
 				@{$columns_by_grouping -> [1]},
 			)
@@ -926,7 +960,7 @@ sub sql {
 
 	}
 
-	if ((!$have_id_filter && !$is_ids && !$is_only_grouping) || $is_first) {
+	if ((!$have_id_filter && !$is_ids && !$is_only_grouping) || $is_first && $order) {
 
 		$order ||= [$root . ($DB_MODEL -> {tables} -> {$root} -> {columns} -> {label} ? '.label' : '.id')];
 
@@ -938,6 +972,10 @@ sub sql {
 
 		$sql .= "\nORDER BY\n $order";
 
+	}
+
+	if ($is_first && $SQL_VERSION -> {driver} eq 'MySQL') {
+		$sql .= "\nLIMIT 1";
 	}
 
 	my @result;
@@ -979,7 +1017,7 @@ sub sql {
 	}
 	else {
 
-		if ($limit && !$_REQUEST {xls}) {
+		if ($limit && !($_REQUEST {xls} || $_REQUEST {xlsx})) {
 
 			if ($SQL_VERSION -> {driver} eq 'Oracle') {
 
@@ -1059,7 +1097,7 @@ sub sql {
 
 			if ($is_ids) {
 
-				$sql =~ s{^SELECT}{SELECT DISTINCT};
+				$sql =~ s{^SELECT}{SELECT DISTINCT} if $sql !~ /^SELECT\s+DISTINCT\s/;
 
 				my $ids;
 
@@ -1097,6 +1135,15 @@ sub sql {
 	foreach my $record (@$records) {
 
 		_sql_unwrap_record ($record, \@cols);
+
+		if ($sql_filters -> {hierarchy}) {
+			foreach my $i (reverse @tables) {
+				if ($i -> {parent} && $record -> {$i -> {parent}} && $record -> {$i -> {single}}) {
+					$record -> {$i -> {parent}} -> {$i -> {single}}
+						= $record -> {$i->{single}};
+				}
+			};
+		}
 
 	}
 

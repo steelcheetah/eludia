@@ -22,9 +22,9 @@ sub download_file_header {
 
 	set_cookie (
 		-name => 'download_salt',
-		-value => $_REQUEST {__salt},
+		-value => $_REQUEST_VERBATIM{__salt} || $_REQUEST_VERBATIM{salt},
 		-path => '/'
-	) if $_REQUEST {__salt};
+	) if $_REQUEST_VERBATIM{__salt} || $_REQUEST_VERBATIM{salt};
 
 	$r -> status (200);
 
@@ -81,6 +81,12 @@ sub download_file_header {
 		$r -> headers_out -> {'Accept-Ranges'} = 'bytes';
 	}
 
+	if ($preconf -> {core_cors}) {
+		$r -> headers_out -> {'Access-Control-Allow-Origin'} = $preconf -> {core_cors};
+		$r -> headers_out -> {'Access-Control-Allow-Credentials'} = 'true';
+		$r -> headers_out -> {'Access-Control-Allow-Headers'} = 'Origin, X-Requested-With, Content-Type, Accept, Cookie, Authorization';
+	}
+
 	delete $r -> headers_out -> {'Content-Encoding'};
 
 	$r -> headers_out -> {'P3P'} = 'CP="IDC DSP COR ADM DEVi TAIi PSA PSD IVAi IVDi CONi HIS OUR IND CNT"';
@@ -99,7 +105,11 @@ sub download_file {
 
 	my ($options) = @_;
 
-	my $path = $r -> document_root . $options -> {path};
+	if ($ENV {NO_SETUP_REQUEST}) {
+		return;
+	}
+
+	my $path = $preconf -> {_} -> {docroot} . $options -> {path};
 
 	-f $path or $path = $options -> {path};
 
@@ -128,29 +138,17 @@ sub upload_files {
 
 	my ($options) = @_;
 
-	my @nos = ();
-
-	foreach my $k (keys %_REQUEST) {
-
-		$k =~ /^_$options->{name}_(\d+)$/ or next;
-
-		$_REQUEST {$k} or next;
-
-		push @nos, $1;
-
-	}
-
 	my @result = ();
 
 	my $name = $options -> {name};
 
-	foreach my $no (sort {$a <=> $b} @nos) {
+	foreach my $k (keys %_REQUEST) {
 
-		$options -> {name} = "${name}_${no}";
+		$k =~ /^_$options->{name}(?:\[\])?$/ or next;
 
-		my $is_multiple_file_field = 1 < 0 + @{$_REQUEST {"_" . $options -> {name} . "[]"}};
+		$_REQUEST {$k} or next;
 
-		if ($is_multiple_file_field) {
+		if (@{$_REQUEST {$k}}) {
 
 			my $files = upload_file_multiple ($options);
 
@@ -164,7 +162,6 @@ sub upload_files {
 	}
 
 	return \@result;
-
 }
 
 ################################################################################
@@ -185,6 +182,10 @@ sub upload_file_multiple {
 		push @files, upload_file ($options);
 	}
 
+	if (@files > 1) {
+		@files = grep {$_} @files;
+	}
+
 	delete $options -> {upload};
 
 	return \@files;
@@ -196,9 +197,10 @@ sub upload_file {
 
 	my ($options) = @_;
 
+	return undef if $ENV {NO_SETUP_REQUEST};
+
 	my $is_multiple_file_field = !$options -> {upload}
 		&& 1 < 0 + @{$_REQUEST {"_" . $options -> {name} . "[]"}};
-
 
 	return undef
 		if $is_multiple_file_field;
@@ -209,9 +211,71 @@ sub upload_file {
 
 	my ($fh, $filename, $file_size, $file_type) = upload_file_dimensions ($upload);
 
+	if ($apr -> header_in ('Content-Type') =~ /charset=(.+?);/) {
+		my $charset = $1 || $i18n -> {_charset};
+		unless ($charset eq $i18n -> {_charset}) {
+			$filename = encode ($i18n -> {_charset}, decode ($charset, $filename));
+		}
+	}
+
+	my $no_limit_param = '_file_no_limit_for_' . $options -> {name};
+
+	$no_limit_param =~ s/_\d+$//;
+	$options -> {no_limit} = $_REQUEST {$no_limit_param} if exists $_REQUEST {$no_limit_param};
+
+	$options -> {file_extensions}      ||= $preconf -> {file_extensions};
+	$options -> {max_file_size}        ||= $preconf -> {max_file_size};
+	$options -> {file_max_name_length} ||= $preconf -> {file_max_name_length};
+
+	@{$options -> {file_extensions}} > 0 or delete $options -> {file_extensions};
+
+	if (
+		$filename
+		&& !$options -> {no_limit}
+		&& $options -> {file_extensions}
+		&& !($filename =~ /\.([^\.]*?)$/ && (grep {lc ($1) eq lc $_} @{$options -> {file_extensions}}))
+	) {
+		my $error = $i18n -> {file_ext_fail} . join ', ', map { '.' . $_ } @{$options -> {file_extensions}};
+
+		if ($options -> {error_result}) {
+			return {error => $error};
+		} elsif ($_REQUEST {__json_response}) {
+			out_json ({status => 'error', label  => $error});
+		} else {
+			croak "#_$$options{name}#: " . $error;
+		}
+		return undef;
+	};
+
 	unless ($file_size > 0) {
 
 		die "#_$$options{name}#: $i18n->{empty_file}" if $filename;
+		return undef;
+
+	} elsif ($filename && !$options -> {no_limit} && $options -> {max_file_size} && $file_size > ($options -> {max_file_size} << 20)) {
+
+		my $error = sprintf ($i18n -> {max_file_size_fail}, $options -> {max_file_size});
+		if ($options -> {error_result}) {
+			return {error => $error};
+		} elsif ($_REQUEST {__json_response}) {
+			out_json ({status => 'error', label  => $error});
+		} else {
+			croak "#_$$options{name}#: " . $error;
+		}
+		return undef;
+
+	}
+
+	if ($options -> {file_max_name_length} && length $filename > $options -> {file_max_name_length}) {
+		my $error = sprintf($i18n -> {file_max_name_length_fail}, $options -> {file_max_name_length});
+
+		if ($options -> {error_result}) {
+			return {error =>$error};
+		} elsif ($_REQUEST {__json_response}) {
+			out_json ({status => 'error', label => $error});
+		} else {
+			croak "#_$$options{name}#: $error";
+		}
 
 		return undef;
 	}
@@ -249,9 +313,19 @@ sub upload_path {
 
 	my ($y, $m, $d) = split /-/, sprintf ('%04d-%02d-%02d', Date::Calc::Today);
 
-	$options -> {dir} ||= 'upload/images';
+	my $direction;
 
-	my $dir = $preconf -> {_} -> {docroot} . "/i/$$options{dir}";
+	if (ref $options -> {dir} eq 'CODE') {
+
+		$direction = $options -> {dir} ($filename, $options);
+	} elsif (ref $options -> {dir} eq '') {
+
+		$direction = $options -> {dir};
+	}
+
+	$direction ||= 'upload/images';
+
+	my $dir = $preconf -> {_} -> {docroot} . "/i/$direction";
 
 	foreach my $subdir ('', $y, $m, $d) {
 
@@ -263,7 +337,7 @@ sub upload_path {
 
 	my $ext = $filename =~ /[A-Za-z0-9]+$/ ? ".$&" : '';
 
-	my $path = "/i/$$options{dir}/$y/$m/$d/" . time . '-' . (++ $_REQUEST {__files_cnt}) . "-$$" . $ext;
+	my $path = "/i/$direction/$y/$m/$d/" . time . '-' . (++ $_REQUEST {__files_cnt}) . "-$$" . $ext;
 
 	return ($path, $preconf -> {_} -> {docroot} . $path);
 

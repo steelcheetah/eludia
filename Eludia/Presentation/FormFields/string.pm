@@ -2,7 +2,8 @@ sub draw_form_field_string {
 
 	my ($options, $data) = @_;
 	
-	$options -> {value} ||= $data -> {$options -> {name}};
+	$options -> {value} ||= $data -> {$options -> {name}}
+		if !defined $options -> {value};
 		
 	if ($options -> {picture}) {
 	

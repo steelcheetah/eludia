@@ -40,6 +40,11 @@ sub redirect {
 
 	my ($url, $options) = @_;
 
+	if ($ENV {NO_SETUP_REQUEST}) {
+		$_REQUEST {__response_sent} = 1;
+		return;
+	}
+
 	if (ref $url eq HASH) {
 		$url = create_url (%$url);
 	}

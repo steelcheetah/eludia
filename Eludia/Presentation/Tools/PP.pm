@@ -44,11 +44,11 @@ sub dump_tag {
 	$html .= dump_attributes ($attributes) if $attributes;
 	
 	$html .= '>';
-	
+
 	$value or return $html;
-	
+
 	$html .= "$value</$tag>";
-	
+
 	return $html;
 
 }

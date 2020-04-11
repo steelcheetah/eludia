@@ -105,7 +105,7 @@ sub handle_request_for_application {
 
 	ref $handler eq CODE or die "handler '$handler' not defined for '$app' ($ENV{SCRIPT_NAME})\n";
 
-	eval { my $result = &$handler (); }; $@ or return;
+	eval { my $result = &$handler ($socket); }; $@ or return;
 
 	warn $@; print "Status: 500 Internal Error\r\nContent-type: text/html\r\n\r\n<pre>$@</pre>";
 

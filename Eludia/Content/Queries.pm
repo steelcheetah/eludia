@@ -395,7 +395,7 @@ sub do_update___queries {
 
 	my @order = ();
 
-	my $is_any_column_shown = 0;
+	my $is_any_column_shown ||= $_REQUEST {__has_ord_fixed};
 
 	foreach my $key (keys %_REQUEST) {
 
@@ -605,6 +605,8 @@ sub draw_item_of___queries {
 
 		next unless ($o -> {order} || $o -> {no_order});
 
+		$_REQUEST {__has_ord_fixed} ||= $o -> {ord_fixed};
+
 		next
 			if $o -> {__hidden} && !$o -> {no_hidden} || $o -> {ord_fixed};
 
@@ -725,7 +727,7 @@ sub draw_item_of___queries {
 	}
 
 	return draw_form ({
-			keep_params	=> ['__form_checkboxes_custom'],
+			keep_params	=> ['__form_checkboxes_custom', '__has_ord_fixed'],
 			right_buttons => [
 				{
 					icon	=> 'delete',

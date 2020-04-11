@@ -29,11 +29,11 @@ sub checksum_filter {
 	checksum_lock ($kind);
 
 	foreach my $key (keys %$name2def) {
-	
+
 		my $name     = $prefix . $key;
 		my $def      = $name2def -> {$key};
 		my $checksum;
-		
+
 		if (ref $def) {
 			$checksum = checksum ($def);			
 			next if ($hash -> {$name} || '') eq $checksum;
@@ -199,6 +199,8 @@ BEGIN {
 			last_update 
 			model_scripts 
 			updates_scripts
+			model_scripts_content 
+			updates_scripts_content			
 			internal_error_repeats
 			
 		)) { 

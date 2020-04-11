@@ -10,7 +10,7 @@ sub start_session {
 
 	while (1) {
 
-		$_REQUEST {sid} = int (rand () * time ()) . int (rand () * time ());
+		$_REQUEST {sid} = 0 + substr(int (rand () * time ()) . int (rand () * time()), 0, 18);
 
 		sql_select_scalar ("SELECT id FROM $conf->{systables}->{sessions} WHERE id = ?", $_REQUEST {sid}) or last;
 
@@ -92,6 +92,7 @@ sub get_user_with_fixed_session {
 
 	my ($peer_server) = @_;
 
+	return $_USER if $_USER && $ENV {NO_SETUP_REQUEST};
 
 #	__profile_in ('auth.get_user');
 

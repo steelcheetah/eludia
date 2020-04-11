@@ -1716,7 +1716,7 @@ sub test {
 
 	require Test::Harness;
 
-	use File::Find::Rule;
+	require File::Find::Rule;
 	my @core_tests = File::Find::Rule -> name ('*.t')-> in ($core_path);
 
 	mkdir 't';
@@ -1735,7 +1735,11 @@ sub test {
 
 	}
 
-	my $cmd = qq {perl -I"$core_path" -MTest::Harness -MFile::Find::Rule -MTest::Harness -e"runtests (File::Find::Rule->name('*.t')->in('.'))"};
+	my $template = '*.t';
+	if ($ARGV[0]) {
+		$template = "_core_" . $ARGV[0] . ".t";
+	}
+	my $cmd = qq {perl -I"$core_path" -MTest::Harness -MFile::Find::Rule -MTest::Harness -e"runtests (File::Find::Rule->name('$template')->in('.'))"};
 
 	use IPC::Open3;
 
@@ -1748,7 +1752,6 @@ sub test {
 		next if $line =~ /^Subroutine \w+ redefined at/;
 
 		print $line;
-
 	}
 
 	waitpid ($pid, 0);
@@ -1756,6 +1759,41 @@ sub test {
 	my $child_exit_status = $? >> 8;
 
 	return $child_exit_status;
+}
+
+################################################################################
+
+sub updates {
+
+	require Eludia::Content::HTTP::API;
+	
+	my $app = File::Spec -> curdir ();
+
+	my $package = check_configuration_for_application ($app);
+	
+	my $preconf = ${${"${package}::"}{preconf}};
+	
+	unless ($preconf -> {no_model_update}) {
+	
+		print STDERR <<EOT;
+*********************************************************************
+You didn't set no_model_update but do run `updates`. That's nonsense!
+*********************************************************************
+EOT
+		exit 1;	
+
+	}
+	
+	delete $preconf -> {no_model_update};	
+	$preconf -> {core_debug_profiling} = 1;
+	$preconf -> {core_debug_require_scripts} = 1;
+	
+	&{"${package}::$_"} () foreach qw (
+		sql_reconnect 
+		require_model 
+		require_scripts
+	);
+
 }
 
 1;
